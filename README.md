@@ -4,9 +4,12 @@ Backend API service for ProgressEye 2.0 multi-tenant school operating system.
 
 ## Tech Stack
 - **Framework**: NestJS 11 on Fastify HTTP adapter
-- **Database & ORM**: PostgreSQL 17 with Row-Level Security (RLS) & Prisma
+- **Database & ORM**: Supabase PostgreSQL / PostgreSQL 17 with Row-Level Security (RLS) & Prisma
 - **Background Jobs**: BullMQ on Redis
-- **Validation & Spec**: Zod (`nestjs-zod`) & OpenAPI 3.1 (`@nestjs/swagger`)
+- **Validation & Spec**: Zod (`nestjs-zod`) & OpenAPI 3.1 (`@nestjs/swagger`) with Scalar UI
+- **Logging**: `nestjs-pino` (structured JSON with request ID tracking & data redaction)
+- **Security**: Fastify Helmet, strict CORS, and `@nestjs/throttler`
+- **Errors**: RFC 9457 `application/problem+json` global exception handling
 - **Linter & Formatter**: Biome
 - **Package Manager**: pnpm
 
@@ -15,17 +18,17 @@ Backend API service for ProgressEye 2.0 multi-tenant school operating system.
 ### Prerequisites
 - Node.js `24.x` (see `.nvmrc`)
 - pnpm `12.x`
-- Docker & Docker Compose (for PostgreSQL and Redis)
+- Supabase project connection string or Docker Compose (PostgreSQL 17, Redis, Mailpit, MinIO)
 
 ### Setup & Local Services
 ```bash
-# Start local PostgreSQL and Redis
+# Start local infrastructure (if running offline without Supabase Cloud)
 docker compose up -d
 
 # Install dependencies
 pnpm install
 
-# Copy environment variables
+# Configure environment variables (Supabase or local Postgres)
 cp .env.example .env
 
 # Generate Prisma client and migrate
@@ -47,12 +50,19 @@ pnpm prisma:migrate
 | `pnpm format` | Format code with Biome |
 | `pnpm typecheck` | Strict TypeScript type checking without emitting files |
 | `pnpm test` | Run unit test suites |
-| `pnpm test:e2e` | Run end-to-end and tenant isolation test suites |
+| `pnpm test:e2e` | Run end-to-end and health check test suites |
 | `pnpm prisma:migrate` | Run database migrations |
 | `pnpm prisma:seed` | Seed database with initial platform records |
-| `pnpm openapi:generate` | Generate pinned `docs/openapi.json` contract |
+| `pnpm openapi:generate` | Generate pinned `openapi/openapi.json` contract for web client |
+
+## Endpoints & Documentation
+- **Interactive Documentation**: `http://localhost:4000/docs` (Scalar UI)
+- **OpenAPI Specification**: `http://localhost:4000/api/v1/openapi.json`
+- **Liveness Probe**: `GET /api/v1/health/live`
+- **Readiness Probe**: `GET /api/v1/health/ready` (checks Database & Redis)
 
 ## Architecture & Tenancy
 - **RLS Isolation**: Every tenant table requires `school_id` and RLS policy enforcement.
 - **Contract First**: OpenAPI document served at `/api/v1/openapi.json` powers `progresseye-web` client generation via Orval.
 - **Money Handling**: All currency calculations and storage strictly use integer paise.
+- **RFC 9457 Errors**: All HTTP errors return standard `application/problem+json`.

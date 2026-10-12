@@ -1,0 +1,45 @@
+name: CI (API)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run Biome Lint
+        run: pnpm lint
+
+      - name: Run TypeScript Typecheck
+        run: pnpm typecheck
+
+      - name: Generate Prisma Client
+        run: pnpm prisma:generate
+
+      - name: Run Unit Tests
+        run: pnpm test
+
+      - name: Run E2E Tests
+        run: pnpm test:e2e
+
+      - name: Run Build
+        run: pnpm build
+
+      - name: Verify OpenAPI Spec Generation
+        run: pnpm openapi:generate
