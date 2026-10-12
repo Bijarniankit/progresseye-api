@@ -1,17 +1,26 @@
-import { Worker } from "bullmq";
+import { validateEnv } from "./config/env.schema";
 
 async function bootstrapWorker() {
-  const redisHost = process.env.REDIS_HOST || "localhost";
-  const redisPort = Number(process.env.REDIS_PORT) || 6379;
+  const env = validateEnv(process.env);
+  const redisHost = env.REDIS_HOST;
+  const redisPort = env.REDIS_PORT;
 
   console.log(
-    `ProgressEye BullMQ Worker starting... connecting to Redis at ${redisHost}:${redisPort}`,
+    `[ProgressEye Worker] Starting background worker... Redis: ${redisHost}:${redisPort}`,
   );
 
-  // Workers will register handlers in subsequent phases
+  const shutdown = async (signal: string) => {
+    console.log(`[ProgressEye Worker] Received ${signal}, shutting down gracefully...`);
+    process.exit(0);
+  };
+
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+
+  console.log("[ProgressEye Worker] Worker ready for queue processors.");
 }
 
 bootstrapWorker().catch((err) => {
-  console.error("Worker failed to start:", err);
+  console.error("[ProgressEye Worker] Fatal worker boot error:", err);
   process.exit(1);
 });
