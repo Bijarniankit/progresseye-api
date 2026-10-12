@@ -7,7 +7,7 @@ datasource db {
   provider   = "postgresql"
   url        = env("DATABASE_URL")
   directUrl  = env("DIRECT_URL")
-  extensions = [pgcrypto, uuid_ossp(map: "uuid-ossp")]
+  extensions = [pgcrypto, pg_trgm, btree_gist, citext]
 }
 
 // Tenancy

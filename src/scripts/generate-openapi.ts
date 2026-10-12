@@ -10,6 +10,9 @@ async function generateOpenApi() {
     logger: false,
   });
 
+  const apiPrefix = process.env.API_PREFIX || "/api/v1";
+  app.setGlobalPrefix(apiPrefix);
+
   const config = new DocumentBuilder()
     .setTitle("ProgressEye API")
     .setDescription("ProgressEye 2.0 Multi-Tenant School Management API")
@@ -18,12 +21,19 @@ async function generateOpenApi() {
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
-  const outputPath = path.resolve(__dirname, "../../docs/openapi.json");
 
-  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-  fs.writeFileSync(outputPath, JSON.stringify(document, null, 2));
+  const targetDirs = [
+    path.resolve(__dirname, "../../openapi"),
+    path.resolve(__dirname, "../../docs"),
+  ];
 
-  console.log(`OpenAPI document generated successfully at ${outputPath}`);
+  for (const dir of targetDirs) {
+    fs.mkdirSync(dir, { recursive: true });
+    const targetFile = path.join(dir, "openapi.json");
+    fs.writeFileSync(targetFile, JSON.stringify(document, null, 2), "utf-8");
+    console.log(`[OpenAPI Export] Spec written to ${targetFile}`);
+  }
+
   await app.close();
   process.exit(0);
 }
