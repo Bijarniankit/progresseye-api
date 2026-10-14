@@ -1,6 +1,8 @@
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
 import { Test, type TestingModule } from "@nestjs/testing";
+
 import request = require("supertest");
+
 import { AppModule } from "../../src/app.module";
 import { PrismaService } from "../../src/infra/prisma/prisma.service";
 import { RedisService } from "../../src/infra/redis/redis.service";
