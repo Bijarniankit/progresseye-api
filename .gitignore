@@ -33,5 +33,5 @@ coverage/
 playwright-report/
 test-results/
 reports/
-*.pdf
+
 
