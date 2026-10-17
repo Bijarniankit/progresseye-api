@@ -77,11 +77,13 @@ jobs:
       - name: Apply Database Migrations (Postgres Container)
         env:
           DATABASE_URL: postgresql://postgres:postgrespassword@localhost:5432/test_db
+          DIRECT_URL: postgresql://postgres:postgrespassword@localhost:5432/test_db
         run: pnpm prisma migrate deploy
 
       - name: End-to-End Tests (Postgres & Redis Containers)
         env:
           DATABASE_URL: postgresql://postgres:postgrespassword@localhost:5432/test_db
+          DIRECT_URL: postgresql://postgres:postgrespassword@localhost:5432/test_db
           REDIS_HOST: localhost
           REDIS_PORT: 6379
         run: pnpm test:e2e
@@ -90,6 +92,9 @@ jobs:
         run: pnpm build
 
       - name: Verify OpenAPI Spec Drift
+        env:
+          DATABASE_URL: postgresql://postgres:postgrespassword@localhost:5432/test_db
+          DIRECT_URL: postgresql://postgres:postgrespassword@localhost:5432/test_db
         run: |
           pnpm openapi:generate
           git diff --exit-code openapi/
