@@ -30,15 +30,24 @@ updates:
       - dependency-name: "typescript"
         update-types:
           - "version-update:semver-major"
-      - dependency-name: "jest"
+      - dependency-name: "@types/node"
         update-types:
           - "version-update:semver-major"
       - dependency-name: "@types/jest"
+        update-types:
+          - "version-update:semver-major"
+      - dependency-name: "jest"
         update-types:
           - "version-update:semver-major"
       - dependency-name: "prisma"
         update-types:
           - "version-update:semver-major"
       - dependency-name: "@prisma/client"
+        update-types:
+          - "version-update:semver-major"
+      - dependency-name: "zod"
+        update-types:
+          - "version-update:semver-major"
+      - dependency-name: "@biomejs/biome"
         update-types:
           - "version-update:semver-major"
