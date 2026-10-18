@@ -39,7 +39,7 @@
     "argon2": "^0.41.1",
     "bullmq": "^5.41.0",
     "fastify": "^5.12.7",
-    "ioredis": "^5.5.0",
+    "ioredis": "^6.0.0",
     "nestjs-pino": "^5.3.1",
     "nestjs-zod": "^4.2.0",
     "pino": "^10.4.0",
