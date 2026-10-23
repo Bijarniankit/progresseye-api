@@ -20,3 +20,43 @@ model School {
 
   @@map("schools")
 }
+
+enum LeadType {
+  CONTACT
+  DEMO
+  NEWSLETTER
+
+  @@map("lead_types")
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  ARCHIVED
+
+  @@map("lead_statuses")
+}
+
+// Platform / Marketing Leads (Outside RLS, No school_id)
+model Lead {
+  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  type           LeadType
+  name           String?
+  email          String      @db.Citext
+  schoolName     String?     @map("school_name")
+  message        String?
+  status         LeadStatus  @default(NEW)
+  consentText    String      @map("consent_text")
+  consentedAt    DateTime    @default(now()) @map("consented_at")
+  ipAddressHash  String?     @map("ip_address_hash")
+  userAgent      String?     @map("user_agent")
+  idempotencyKey String?     @unique @map("idempotency_key")
+  retentionUntil DateTime?   @map("retention_until")
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+
+  @@index([type, createdAt])
+  @@index([email])
+  @@index([status])
+  @@map("public_leads")
+}

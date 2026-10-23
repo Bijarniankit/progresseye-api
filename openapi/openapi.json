@@ -35,6 +35,114 @@
           "Health"
         ]
       }
+    },
+    "/api/v1/public/contact": {
+      "post": {
+        "description": "Registers an institutional contact inquiry from the public marketing website.",
+        "operationId": "PublicController_submitContact",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContactLeadDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Inquiry received successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicLeadResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error or invalid submission (RFC 9457)"
+          }
+        },
+        "summary": "Submit contact inquiry",
+        "tags": [
+          "Public"
+        ]
+      }
+    },
+    "/api/v1/public/demo": {
+      "post": {
+        "description": "Schedules an educational product walkthrough and demo preview.",
+        "operationId": "PublicController_submitDemo",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DemoLeadDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Demo request received successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicLeadResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error or invalid submission (RFC 9457)"
+          }
+        },
+        "summary": "Request institutional demo",
+        "tags": [
+          "Public"
+        ]
+      }
+    },
+    "/api/v1/public/newsletter": {
+      "post": {
+        "description": "Registers an email address for product release updates and announcements.",
+        "operationId": "PublicController_submitNewsletter",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewsletterLeadDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Subscribed to updates successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicLeadResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error or invalid submission (RFC 9457)"
+          }
+        },
+        "summary": "Subscribe to product updates",
+        "tags": [
+          "Public"
+        ]
+      }
     }
   },
   "info": {
@@ -53,6 +161,162 @@
         "type": "http"
       }
     },
-    "schemas": {}
+    "schemas": {
+      "ContactLeadDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Contact person's full name",
+            "minLength": 2,
+            "maxLength": 100,
+            "example": "Dr. A. Sharma"
+          },
+          "email": {
+            "type": "string",
+            "description": "Contact email address",
+            "maxLength": 255,
+            "example": "principal@delhischool.edu.in"
+          },
+          "schoolName": {
+            "type": "string",
+            "description": "Name of the educational institution",
+            "minLength": 2,
+            "maxLength": 150,
+            "example": "Delhi Public School"
+          },
+          "message": {
+            "type": "string",
+            "description": "Inquiry details or message",
+            "minLength": 10,
+            "maxLength": 2000,
+            "example": "We would like to learn more about attendance tracking."
+          },
+          "consentGiven": {
+            "type": "boolean",
+            "description": "Affirmative consent confirmation",
+            "example": true
+          },
+          "website_url": {
+            "type": "string",
+            "description": "Honeypot field for bot detection (must be omitted or empty)"
+          }
+        },
+        "required": [
+          "name",
+          "email",
+          "schoolName",
+          "message",
+          "consentGiven"
+        ]
+      },
+      "PublicLeadResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique lead registration ID",
+            "example": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+          },
+          "status": {
+            "type": "string",
+            "description": "Receipt status",
+            "example": "received"
+          },
+          "message": {
+            "type": "string",
+            "description": "User-facing acknowledgement message",
+            "example": "Inquiry received successfully"
+          },
+          "createdAt": {
+            "type": "string",
+            "description": "UTC ISO timestamp when lead was received",
+            "example": "2026-10-24T10:00:00.000Z"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "message",
+          "createdAt"
+        ]
+      },
+      "DemoLeadDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Contact person's full name",
+            "minLength": 2,
+            "maxLength": 100,
+            "example": "Dr. A. Sharma"
+          },
+          "email": {
+            "type": "string",
+            "description": "Contact email address",
+            "maxLength": 255,
+            "example": "principal@delhischool.edu.in"
+          },
+          "schoolName": {
+            "type": "string",
+            "description": "Name of the educational institution",
+            "minLength": 2,
+            "maxLength": 150,
+            "example": "Delhi Public School"
+          },
+          "notes": {
+            "type": "string",
+            "description": "Additional institution details or inquiry notes",
+            "maxLength": 1000,
+            "example": "Evaluating SIS replacement for 2027 academic session."
+          },
+          "preferredTime": {
+            "type": "string",
+            "description": "Preferred demonstration timing",
+            "maxLength": 100,
+            "example": "Morning (9 AM - 12 PM)"
+          },
+          "consentGiven": {
+            "type": "boolean",
+            "description": "Affirmative consent confirmation",
+            "example": true
+          },
+          "website_url": {
+            "type": "string",
+            "description": "Honeypot field for bot detection (must be omitted or empty)"
+          }
+        },
+        "required": [
+          "name",
+          "email",
+          "schoolName",
+          "consentGiven"
+        ]
+      },
+      "NewsletterLeadDto": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "Subscriber email address",
+            "maxLength": 255,
+            "example": "updates@school.edu.in"
+          },
+          "consentGiven": {
+            "type": "boolean",
+            "description": "Affirmative consent confirmation",
+            "example": true
+          },
+          "website_url": {
+            "type": "string",
+            "description": "Honeypot field for bot detection (must be omitted or empty)"
+          }
+        },
+        "required": [
+          "email",
+          "consentGiven"
+        ]
+      }
+    }
   }
 }

@@ -8,6 +8,7 @@ import { AppConfigService } from "./config/config.service";
 import { PrismaModule } from "./infra/prisma/prisma.module";
 import { RedisModule } from "./infra/redis/redis.module";
 import { HealthModule } from "./modules/platform/health/health.module";
+import { PublicModule } from "./modules/public/public.module";
 
 @Module({
   imports: [
@@ -40,6 +41,11 @@ import { HealthModule } from "./modules/platform/health/health.module";
             "body.token",
             "body.secret",
             "body.apiKey",
+            "body.email",
+            "body.name",
+            "body.schoolName",
+            "body.message",
+            "body.notes",
           ],
         },
       }),
@@ -57,6 +63,7 @@ import { HealthModule } from "./modules/platform/health/health.module";
     PrismaModule,
     RedisModule,
     HealthModule,
+    PublicModule,
   ],
   controllers: [],
   providers: [
