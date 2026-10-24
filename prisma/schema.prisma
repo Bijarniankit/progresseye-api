@@ -52,6 +52,7 @@ model Lead {
   userAgent      String?     @map("user_agent")
   idempotencyKey String?     @unique @map("idempotency_key")
   retentionUntil DateTime?   @map("retention_until")
+  notifiedAt     DateTime?   @map("notified_at")
   createdAt      DateTime    @default(now()) @map("created_at")
   updatedAt      DateTime    @updatedAt @map("updated_at")
 

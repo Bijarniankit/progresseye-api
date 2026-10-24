@@ -40,7 +40,16 @@
       "post": {
         "description": "Registers an institutional contact inquiry from the public marketing website.",
         "operationId": "PublicController_submitContact",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "idempotency-key",
+            "required": true,
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -64,6 +73,15 @@
           },
           "400": {
             "description": "Validation error or invalid submission (RFC 9457)"
+          },
+          "413": {
+            "description": "Payload too large (>16 kB) (RFC 9457)"
+          },
+          "422": {
+            "description": "Unprocessable entity - idempotency key payload mismatch (RFC 9457)"
+          },
+          "429": {
+            "description": "Rate limit exceeded (RFC 9457)"
           }
         },
         "summary": "Submit contact inquiry",
@@ -76,7 +94,16 @@
       "post": {
         "description": "Schedules an educational product walkthrough and demo preview.",
         "operationId": "PublicController_submitDemo",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "idempotency-key",
+            "required": true,
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -100,6 +127,15 @@
           },
           "400": {
             "description": "Validation error or invalid submission (RFC 9457)"
+          },
+          "413": {
+            "description": "Payload too large (>16 kB) (RFC 9457)"
+          },
+          "422": {
+            "description": "Unprocessable entity - idempotency key payload mismatch (RFC 9457)"
+          },
+          "429": {
+            "description": "Rate limit exceeded (RFC 9457)"
           }
         },
         "summary": "Request institutional demo",
@@ -112,7 +148,16 @@
       "post": {
         "description": "Registers an email address for product release updates and announcements.",
         "operationId": "PublicController_submitNewsletter",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "idempotency-key",
+            "required": true,
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -136,6 +181,15 @@
           },
           "400": {
             "description": "Validation error or invalid submission (RFC 9457)"
+          },
+          "413": {
+            "description": "Payload too large (>16 kB) (RFC 9457)"
+          },
+          "422": {
+            "description": "Unprocessable entity - idempotency key payload mismatch (RFC 9457)"
+          },
+          "429": {
+            "description": "Rate limit exceeded (RFC 9457)"
           }
         },
         "summary": "Subscribe to product updates",
@@ -167,45 +221,49 @@
         "properties": {
           "name": {
             "type": "string",
-            "description": "Contact person's full name",
-            "minLength": 2,
-            "maxLength": 100,
-            "example": "Dr. A. Sharma"
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
           },
           "email": {
             "type": "string",
-            "description": "Contact email address",
-            "maxLength": 255,
-            "example": "principal@delhischool.edu.in"
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
           },
           "schoolName": {
             "type": "string",
-            "description": "Name of the educational institution",
-            "minLength": 2,
-            "maxLength": 150,
-            "example": "Delhi Public School"
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
+          },
+          "topic": {
+            "type": "string",
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
           },
           "message": {
             "type": "string",
-            "description": "Inquiry details or message",
-            "minLength": 10,
-            "maxLength": 2000,
-            "example": "We would like to learn more about attendance tracking."
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
           },
           "consentGiven": {
             "type": "boolean",
-            "description": "Affirmative consent confirmation",
-            "example": true
+            "const": true,
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
           },
           "website_url": {
             "type": "string",
-            "description": "Honeypot field for bot detection (must be omitted or empty)"
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
+          },
+          "turnstileToken": {
+            "type": "string",
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
           }
         },
         "required": [
           "name",
           "email",
-          "schoolName",
           "message",
           "consentGiven"
         ]
@@ -246,44 +304,39 @@
         "properties": {
           "name": {
             "type": "string",
-            "description": "Contact person's full name",
-            "minLength": 2,
-            "maxLength": 100,
-            "example": "Dr. A. Sharma"
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
           },
           "email": {
             "type": "string",
-            "description": "Contact email address",
-            "maxLength": 255,
-            "example": "principal@delhischool.edu.in"
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
           },
           "schoolName": {
             "type": "string",
-            "description": "Name of the educational institution",
-            "minLength": 2,
-            "maxLength": 150,
-            "example": "Delhi Public School"
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
           },
           "notes": {
             "type": "string",
-            "description": "Additional institution details or inquiry notes",
-            "maxLength": 1000,
-            "example": "Evaluating SIS replacement for 2027 academic session."
-          },
-          "preferredTime": {
-            "type": "string",
-            "description": "Preferred demonstration timing",
-            "maxLength": 100,
-            "example": "Morning (9 AM - 12 PM)"
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
           },
           "consentGiven": {
             "type": "boolean",
-            "description": "Affirmative consent confirmation",
-            "example": true
+            "const": true,
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
           },
           "website_url": {
             "type": "string",
-            "description": "Honeypot field for bot detection (must be omitted or empty)"
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
+          },
+          "turnstileToken": {
+            "type": "string",
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
           }
         },
         "required": [
@@ -298,18 +351,24 @@
         "properties": {
           "email": {
             "type": "string",
-            "description": "Subscriber email address",
-            "maxLength": 255,
-            "example": "updates@school.edu.in"
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
           },
           "consentGiven": {
             "type": "boolean",
-            "description": "Affirmative consent confirmation",
-            "example": true
+            "const": true,
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
           },
           "website_url": {
             "type": "string",
-            "description": "Honeypot field for bot detection (must be omitted or empty)"
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
+          },
+          "turnstileToken": {
+            "type": "string",
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
           }
         },
         "required": [

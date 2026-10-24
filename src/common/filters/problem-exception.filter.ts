@@ -50,6 +50,12 @@ export class ProblemExceptionFilter implements ExceptionFilter {
       );
     }
 
+    if (status === HttpStatus.TOO_MANY_REQUESTS) {
+      if (!reply.getHeader("retry-after")) {
+        reply.header("Retry-After", "900");
+      }
+    }
+
     reply.status(status).header("Content-Type", "application/problem+json").send(problem);
   }
 
@@ -70,6 +76,26 @@ export class ProblemExceptionFilter implements ExceptionFilter {
           code: ErrorCode.RATE_LIMIT_EXCEEDED,
           title: "Too Many Requests",
           detail: "Rate limit exceeded. Please wait before making more requests.",
+        };
+      }
+
+      if (status === HttpStatus.PAYLOAD_TOO_LARGE) {
+        return {
+          code: ErrorCode.PAYLOAD_TOO_LARGE,
+          title: "Payload Too Large",
+          detail: "Request body size exceeds the allowable limit (16 kB).",
+        };
+      }
+
+      if (status === HttpStatus.UNPROCESSABLE_ENTITY) {
+        return {
+          code: ErrorCode.UNPROCESSABLE_ENTITY,
+          title: "Unprocessable Entity",
+          detail:
+            typeof response === "string"
+              ? response
+              : (response as { message?: string }).message ||
+                "The request payload could not be processed.",
         };
       }
 

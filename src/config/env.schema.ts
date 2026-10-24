@@ -30,6 +30,19 @@ export const envSchema = z.object({
   // Auth secrets (defaults provided for development/test if not specified)
   JWT_ACCESS_SECRET: z.string().min(16).default("progress-eye-dev-access-secret-32ch"),
   JWT_REFRESH_SECRET: z.string().min(16).default("progress-eye-dev-refresh-secret-32c"),
+
+  // Public Leads & Anti-Abuse
+  LEAD_IP_HMAC_SECRET: z.string().default("dev-lead-ip-hmac-secret"),
+  TURNSTILE_ENABLED: z.string().default("false"),
+  TURNSTILE_SECRET_KEY: z.string().default("1x0000000000000000000000000000000AA"),
+
+  // Email & Notifications (Mailpit locally: localhost:1025)
+  SMTP_HOST: z.string().default("localhost"),
+  SMTP_PORT: z.coerce.number().default(1025),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  MAIL_FROM: z.string().default("noreply@progresseye.com"),
+  LEAD_NOTIFICATION_RECIPIENT: z.string().default("leads@progresseye.com"),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -37,7 +50,7 @@ export type Env = z.infer<typeof envSchema>;
 export function validateEnv(config: Record<string, unknown> = process.env): Env {
   const result = envSchema.safeParse(config);
   if (!result.success) {
-    const errorDetails = result.error.errors
+    const errorDetails = result.error.issues
       .map((err) => `  - ${err.path.join(".")}: ${err.message}`)
       .join("\n");
     throw new Error(

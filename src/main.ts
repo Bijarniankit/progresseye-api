@@ -50,7 +50,14 @@ async function bootstrap() {
     origin: config.get("CORS_ORIGIN"),
     credentials: true,
     methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "x-request-id", "x-school-id"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "x-request-id",
+      "x-school-id",
+      "Idempotency-Key",
+      "idempotency-key",
+    ],
   });
 
   // OpenAPI setup

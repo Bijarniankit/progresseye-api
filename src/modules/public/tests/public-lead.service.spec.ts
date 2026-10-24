@@ -1,9 +1,12 @@
 import { BadRequestException } from "@nestjs/common";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { LeadStatus, LeadType } from "@prisma/client";
+import { AppConfigService } from "../../../config/config.service";
 import { PrismaService } from "../../../infra/prisma/prisma.service";
 import { PublicLeadService } from "../application/public-lead.service";
-import { CONSENT_TEMPLATES } from "../domain/consent-templates";
+import { IdempotencyService } from "../domain/anti-abuse/idempotency.service";
+import { SPAM_VERIFICATION_SERVICE } from "../domain/anti-abuse/spam-verification.service";
+import { LeadNotificationService } from "../domain/notification/lead-notification.service";
 
 describe("PublicLeadService", () => {
   let service: PublicLeadService;
@@ -11,17 +14,41 @@ describe("PublicLeadService", () => {
   const mockPrismaService = {
     lead: {
       create: jest.fn(),
+      findUnique: jest.fn(),
     },
+  };
+
+  const mockConfigService = {
+    get: jest.fn((key: string) => {
+      if (key === "LEAD_IP_HMAC_SECRET") return "test-hmac-secret-123";
+      return undefined;
+    }),
+  };
+
+  const mockIdempotencyService = {
+    validateIdempotencyKey: jest.fn((key) => key),
+    computePayloadHash: jest.fn(() => "mock-payload-hash"),
+    checkOrLock: jest.fn().mockResolvedValue({ isCached: false }),
+    storeResponse: jest.fn().mockResolvedValue(undefined),
+  };
+
+  const mockNotificationService = {
+    enqueueNotification: jest.fn().mockResolvedValue(undefined),
+  };
+
+  const mockSpamService = {
+    verifyToken: jest.fn().mockResolvedValue({ success: true }),
   };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PublicLeadService,
-        {
-          provide: PrismaService,
-          useValue: mockPrismaService,
-        },
+        { provide: PrismaService, useValue: mockPrismaService },
+        { provide: AppConfigService, useValue: mockConfigService },
+        { provide: IdempotencyService, useValue: mockIdempotencyService },
+        { provide: LeadNotificationService, useValue: mockNotificationService },
+        { provide: SPAM_VERIFICATION_SERVICE, useValue: mockSpamService },
       ],
     }).compile();
 
@@ -29,152 +56,149 @@ describe("PublicLeadService", () => {
     jest.clearAllMocks();
   });
 
-  describe("submitContact", () => {
-    it("successfully creates a CONTACT lead with hashed IP and lowercase email", async () => {
-      const mockLead = {
-        id: "123e4567-e89b-12d3-a456-426614174000",
-        type: LeadType.CONTACT,
-        name: "Principal Rao",
-        email: "principal@school.edu.in",
-        schoolName: "National Academy",
-        message: "Need information on school onboarding.",
-        status: LeadStatus.NEW,
-        consentText: CONSENT_TEMPLATES.CONTACT,
-        consentedAt: new Date(),
-        createdAt: new Date("2026-10-24T10:00:00.000Z"),
-        updatedAt: new Date("2026-10-24T10:00:00.000Z"),
+  describe("Honeypot Protection", () => {
+    it("returns ordinary 201 receipt and discards payload without saving to DB or sending notification when honeypot is triggered", async () => {
+      const dto = {
+        name: "Bot User",
+        email: "bot@example.com",
+        schoolName: "Spam School",
+        message: "Spam message buy viagra",
+        consentGiven: true as const,
+        website_url: "http://spam-link.example",
       };
 
-      (mockPrismaService.lead.create as jest.Mock).mockResolvedValue(mockLead);
+      const result = await service.submitContact(dto, { ip: "1.2.3.4" });
 
-      const result = await service.submitContact(
-        {
-          name: "Principal Rao",
-          email: "Principal@School.EDU.IN",
-          schoolName: "National Academy",
-          message: "Need information on school onboarding.",
-          consentGiven: true,
-        },
-        { ip: "203.0.113.195", userAgent: "Mozilla/5.0" },
+      expect(result.response.status).toBe("received");
+      expect(result.response.id).toBeDefined();
+      expect(mockPrismaService.lead.create).not.toHaveBeenCalled();
+      expect(mockNotificationService.enqueueNotification).not.toHaveBeenCalled();
+      expect(mockSpamService.verifyToken).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Spam Verification (Turnstile)", () => {
+    it("throws BadRequestException when spam verification fails", async () => {
+      mockSpamService.verifyToken.mockRejectedValueOnce(
+        new BadRequestException("Spam verification failed"),
       );
 
-      expect(result).toEqual({
-        id: mockLead.id,
-        status: "received",
-        message: "Inquiry received successfully",
-        createdAt: "2026-10-24T10:00:00.000Z",
-      });
+      const dto = {
+        name: "Suspicious User",
+        email: "suspicious@example.com",
+        schoolName: "Test School",
+        message: "Legitimate inquiry text",
+        consentGiven: true as const,
+        turnstileToken: "invalid-token",
+      };
 
-      expect(mockPrismaService.lead.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          type: LeadType.CONTACT,
-          name: "Principal Rao",
-          email: "principal@school.edu.in",
-          schoolName: "National Academy",
-          status: LeadStatus.NEW,
-          consentText: CONSENT_TEMPLATES.CONTACT,
-          ipAddressHash: expect.any(String),
-          userAgent: "Mozilla/5.0",
-        }),
-      });
-
-      // Assert IP was hashed and is not raw
-      const createCall = (mockPrismaService.lead.create as jest.Mock).mock.calls[0][0];
-      expect(createCall.data.ipAddressHash).not.toBe("203.0.113.195");
-      expect(createCall.data.ipAddressHash).toHaveLength(64); // SHA-256 hex
-    });
-
-    it("rejects bot submissions when honeypot field is populated", async () => {
-      await expect(
-        service.submitContact(
-          {
-            name: "Bot Spammer",
-            email: "bot@spam.com",
-            schoolName: "Fake School",
-            message: "Buy cheap crypto",
-            consentGiven: true,
-            website_url: "http://spam.ru",
-          },
-          { ip: "198.51.100.1" },
-        ),
-      ).rejects.toThrow(BadRequestException);
-
+      await expect(service.submitContact(dto, { ip: "1.2.3.4" })).rejects.toThrow(
+        BadRequestException,
+      );
       expect(mockPrismaService.lead.create).not.toHaveBeenCalled();
     });
   });
 
-  describe("submitDemo", () => {
-    it("successfully creates a DEMO lead bundling notes and preferredTime", async () => {
-      const mockLead = {
-        id: "223e4567-e89b-12d3-a456-426614174001",
-        type: LeadType.DEMO,
-        name: "Dean Verma",
-        email: "dean@apex.edu.in",
-        schoolName: "Apex High School",
-        message: "Looking for ERP replacement | Preferred time: Afternoon",
-        status: LeadStatus.NEW,
-        consentText: CONSENT_TEMPLATES.DEMO,
-        consentedAt: new Date(),
-        createdAt: new Date("2026-10-24T11:00:00.000Z"),
-        updatedAt: new Date("2026-10-24T11:00:00.000Z"),
+  describe("Idempotency Handling", () => {
+    it("returns cached response without creating a new database record when request is replayed", async () => {
+      const cachedResponse = {
+        id: "existing-uuid",
+        status: "received" as const,
+        message: "Inquiry received successfully",
+        createdAt: "2026-10-24T10:00:00.000Z",
       };
 
-      (mockPrismaService.lead.create as jest.Mock).mockResolvedValue(mockLead);
-
-      const result = await service.submitDemo(
-        {
-          name: "Dean Verma",
-          email: "dean@apex.edu.in",
-          schoolName: "Apex High School",
-          notes: "Looking for ERP replacement",
-          preferredTime: "Afternoon",
-          consentGiven: true,
-        },
-        { ip: "192.0.2.1" },
-      );
-
-      expect(result.id).toBe(mockLead.id);
-      expect(mockPrismaService.lead.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          type: LeadType.DEMO,
-          message: "Looking for ERP replacement | Preferred time: Afternoon",
-          consentText: CONSENT_TEMPLATES.DEMO,
-        }),
+      mockIdempotencyService.checkOrLock.mockResolvedValueOnce({
+        isCached: true,
+        cachedResponse,
       });
+
+      const dto = {
+        name: "Dr. Sharma",
+        email: "sharma@school.edu.in",
+        schoolName: "Delhi Public School",
+        message: "Inquiry details",
+        consentGiven: true as const,
+      };
+
+      const result = await service.submitContact(dto, {
+        ip: "1.2.3.4",
+        idempotencyKey: "550e8400-e29b-41d4-a716-446655440000",
+      });
+
+      expect(result.isReplayed).toBe(true);
+      expect(result.response).toEqual(cachedResponse);
+      expect(mockPrismaService.lead.create).not.toHaveBeenCalled();
+    });
+
+    it("persists lead and stores response in idempotency cache on first attempt", async () => {
+      const mockLead = {
+        id: "new-lead-uuid",
+        type: LeadType.CONTACT,
+        name: "Dr. Sharma",
+        email: "sharma@school.edu.in",
+        schoolName: "Delhi Public School",
+        message: "Inquiry details",
+        consentText: "Contact Consent",
+        consentedAt: new Date("2026-10-24T10:00:00.000Z"),
+        createdAt: new Date("2026-10-24T10:00:00.000Z"),
+        status: LeadStatus.NEW,
+      };
+
+      mockPrismaService.lead.create.mockResolvedValueOnce(mockLead);
+
+      const dto = {
+        name: "Dr. Sharma",
+        email: "sharma@school.edu.in",
+        schoolName: "Delhi Public School",
+        message: "Inquiry details",
+        consentGiven: true as const,
+      };
+
+      const result = await service.submitContact(dto, {
+        ip: "198.51.100.5",
+        idempotencyKey: "550e8400-e29b-41d4-a716-446655440000",
+      });
+
+      expect(result.isReplayed).toBeFalsy();
+      expect(result.response.id).toBe("new-lead-uuid");
+      expect(mockPrismaService.lead.create).toHaveBeenCalled();
+      expect(mockIdempotencyService.storeResponse).toHaveBeenCalledWith(
+        "550e8400-e29b-41d4-a716-446655440000",
+        "mock-payload-hash",
+        expect.objectContaining({ id: "new-lead-uuid" }),
+      );
+      expect(mockNotificationService.enqueueNotification).toHaveBeenCalledWith("new-lead-uuid");
     });
   });
 
-  describe("submitNewsletter", () => {
-    it("successfully creates a NEWSLETTER lead with minimal fields", async () => {
+  describe("HMAC IP Protection", () => {
+    it("hashes IP using HMAC secret rather than storing raw IP", async () => {
       const mockLead = {
-        id: "333e4567-e89b-12d3-a456-426614174002",
-        type: LeadType.NEWSLETTER,
-        email: "subscriber@school.edu.in",
+        id: "ip-test-uuid",
+        createdAt: new Date(),
         status: LeadStatus.NEW,
-        consentText: CONSENT_TEMPLATES.NEWSLETTER,
-        consentedAt: new Date(),
-        createdAt: new Date("2026-10-24T12:00:00.000Z"),
-        updatedAt: new Date("2026-10-24T12:00:00.000Z"),
+      };
+      mockPrismaService.lead.create.mockResolvedValueOnce(mockLead);
+
+      const dto = {
+        email: "newsletter@school.edu.in",
+        consentGiven: true as const,
       };
 
-      (mockPrismaService.lead.create as jest.Mock).mockResolvedValue(mockLead);
+      await service.submitNewsletter(dto, { ip: "203.0.113.195" });
 
-      const result = await service.submitNewsletter(
-        {
-          email: "subscriber@school.edu.in",
-          consentGiven: true,
-        },
-        { ip: "192.0.2.10" },
+      expect(mockPrismaService.lead.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            ipAddressHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+          }),
+        }),
       );
 
-      expect(result.id).toBe(mockLead.id);
-      expect(mockPrismaService.lead.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          type: LeadType.NEWSLETTER,
-          email: "subscriber@school.edu.in",
-          consentText: CONSENT_TEMPLATES.NEWSLETTER,
-        }),
-      });
+      // Verify raw IP is never passed to Prisma
+      const createCall = mockPrismaService.lead.create.mock.calls[0][0];
+      expect(createCall.data.ipAddressHash).not.toContain("203.0.113.195");
     });
   });
 });
