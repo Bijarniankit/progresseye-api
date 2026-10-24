@@ -14,15 +14,15 @@ export class AppConfigService {
   }
 
   get isProduction(): boolean {
-    return this.env.NODE_ENV === "production";
+    return this.env.APP_ENV === "production" || this.env.NODE_ENV === "production";
   }
 
   get isDevelopment(): boolean {
-    return this.env.NODE_ENV === "development";
+    return this.env.APP_ENV === "development" && this.env.NODE_ENV === "development";
   }
 
   get isTest(): boolean {
-    return this.env.NODE_ENV === "test";
+    return this.env.APP_ENV === "test" || this.env.NODE_ENV === "test";
   }
 
   getAll(): Readonly<Env> {
