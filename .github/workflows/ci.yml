@@ -41,6 +41,11 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      mailpit:
+        image: axllent/mailpit:latest
+        ports:
+          - 1025:1025
+          - 8025:8025
 
     steps:
       - name: Checkout repository
@@ -78,12 +83,16 @@ jobs:
           DIRECT_URL: postgresql://postgres:postgrespassword@localhost:5432/test_db
         run: pnpm prisma migrate deploy
 
-      - name: End-to-End Tests (Postgres & Redis Containers)
+      - name: End-to-End Tests (Postgres, Redis & Mailpit Containers)
         env:
           DATABASE_URL: postgresql://postgres:postgrespassword@localhost:5432/test_db
           DIRECT_URL: postgresql://postgres:postgrespassword@localhost:5432/test_db
           REDIS_HOST: localhost
           REDIS_PORT: 6379
+          SMTP_HOST: localhost
+          SMTP_PORT: 1025
+          MAIL_FROM: noreply@progresseye.com
+          LEAD_NOTIFICATION_RECIPIENT: leads@progresseye.com
         run: pnpm test:e2e
 
       - name: Run Build

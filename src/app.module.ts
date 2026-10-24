@@ -7,7 +7,9 @@ import { ConfigModule } from "./config/config.module";
 import { AppConfigService } from "./config/config.service";
 import { PrismaModule } from "./infra/prisma/prisma.module";
 import { RedisModule } from "./infra/redis/redis.module";
+import { ThrottlerStorageRedisService } from "./infra/redis/throttler-storage-redis.service";
 import { HealthModule } from "./modules/platform/health/health.module";
+import { PublicModule } from "./modules/public/public.module";
 
 @Module({
   imports: [
@@ -40,23 +42,36 @@ import { HealthModule } from "./modules/platform/health/health.module";
             "body.token",
             "body.secret",
             "body.apiKey",
+            "body.email",
+            "body.name",
+            "body.schoolName",
+            "body.message",
+            "body.notes",
+            "body.turnstileToken",
+            "body.website_url",
+            "body.topic",
           ],
         },
       }),
     }),
     ThrottlerModule.forRootAsync({
-      imports: [ConfigModule],
-      inject: [AppConfigService],
-      useFactory: (config: AppConfigService) => [
-        {
-          ttl: config.get("THROTTLE_TTL"),
-          limit: config.get("THROTTLE_LIMIT"),
-        },
-      ],
+      imports: [ConfigModule, RedisModule],
+      inject: [AppConfigService, ThrottlerStorageRedisService],
+      useFactory: (config: AppConfigService, storage: ThrottlerStorageRedisService) => ({
+        throttlers: [
+          {
+            name: "default",
+            ttl: config.get("THROTTLE_TTL"),
+            limit: config.get("THROTTLE_LIMIT"),
+          },
+        ],
+        storage,
+      }),
     }),
     PrismaModule,
     RedisModule,
     HealthModule,
+    PublicModule,
   ],
   controllers: [],
   providers: [

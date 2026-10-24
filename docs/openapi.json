@@ -35,6 +35,168 @@
           "Health"
         ]
       }
+    },
+    "/api/v1/public/contact": {
+      "post": {
+        "description": "Registers an institutional contact inquiry from the public marketing website.",
+        "operationId": "PublicController_submitContact",
+        "parameters": [
+          {
+            "name": "idempotency-key",
+            "required": true,
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContactLeadDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Inquiry received successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicLeadResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error or invalid submission (RFC 9457)"
+          },
+          "413": {
+            "description": "Payload too large (>16 kB) (RFC 9457)"
+          },
+          "422": {
+            "description": "Unprocessable entity - idempotency key payload mismatch (RFC 9457)"
+          },
+          "429": {
+            "description": "Rate limit exceeded (RFC 9457)"
+          }
+        },
+        "summary": "Submit contact inquiry",
+        "tags": [
+          "Public"
+        ]
+      }
+    },
+    "/api/v1/public/demo": {
+      "post": {
+        "description": "Schedules an educational product walkthrough and demo preview.",
+        "operationId": "PublicController_submitDemo",
+        "parameters": [
+          {
+            "name": "idempotency-key",
+            "required": true,
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DemoLeadDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Demo request received successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicLeadResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error or invalid submission (RFC 9457)"
+          },
+          "413": {
+            "description": "Payload too large (>16 kB) (RFC 9457)"
+          },
+          "422": {
+            "description": "Unprocessable entity - idempotency key payload mismatch (RFC 9457)"
+          },
+          "429": {
+            "description": "Rate limit exceeded (RFC 9457)"
+          }
+        },
+        "summary": "Request institutional demo",
+        "tags": [
+          "Public"
+        ]
+      }
+    },
+    "/api/v1/public/newsletter": {
+      "post": {
+        "description": "Registers an email address for product release updates and announcements.",
+        "operationId": "PublicController_submitNewsletter",
+        "parameters": [
+          {
+            "name": "idempotency-key",
+            "required": true,
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewsletterLeadDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Subscribed to updates successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicLeadResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error or invalid submission (RFC 9457)"
+          },
+          "413": {
+            "description": "Payload too large (>16 kB) (RFC 9457)"
+          },
+          "422": {
+            "description": "Unprocessable entity - idempotency key payload mismatch (RFC 9457)"
+          },
+          "429": {
+            "description": "Rate limit exceeded (RFC 9457)"
+          }
+        },
+        "summary": "Subscribe to product updates",
+        "tags": [
+          "Public"
+        ]
+      }
     }
   },
   "info": {
@@ -53,6 +215,167 @@
         "type": "http"
       }
     },
-    "schemas": {}
+    "schemas": {
+      "ContactLeadDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
+          },
+          "email": {
+            "type": "string",
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
+          },
+          "schoolName": {
+            "type": "string",
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
+          },
+          "topic": {
+            "type": "string",
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
+          },
+          "message": {
+            "type": "string",
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
+          },
+          "consentGiven": {
+            "type": "boolean",
+            "const": true,
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
+          },
+          "website_url": {
+            "type": "string",
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
+          },
+          "turnstileToken": {
+            "type": "string",
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
+          }
+        },
+        "required": [
+          "name",
+          "email",
+          "message",
+          "consentGiven"
+        ]
+      },
+      "PublicLeadResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique lead registration ID",
+            "example": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+          },
+          "status": {
+            "type": "string",
+            "description": "Receipt status",
+            "example": "received"
+          },
+          "message": {
+            "type": "string",
+            "description": "User-facing acknowledgement message",
+            "example": "Inquiry received successfully"
+          },
+          "createdAt": {
+            "type": "string",
+            "description": "UTC ISO timestamp when lead was received",
+            "example": "2026-10-24T10:00:00.000Z"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "message",
+          "createdAt"
+        ]
+      },
+      "DemoLeadDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
+          },
+          "email": {
+            "type": "string",
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
+          },
+          "schoolName": {
+            "type": "string",
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
+          },
+          "notes": {
+            "type": "string",
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
+          },
+          "consentGiven": {
+            "type": "boolean",
+            "const": true,
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
+          },
+          "website_url": {
+            "type": "string",
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
+          },
+          "turnstileToken": {
+            "type": "string",
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
+          }
+        },
+        "required": [
+          "name",
+          "email",
+          "schoolName",
+          "consentGiven"
+        ]
+      },
+      "NewsletterLeadDto": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
+          },
+          "consentGiven": {
+            "type": "boolean",
+            "const": true,
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
+          },
+          "website_url": {
+            "type": "string",
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
+          },
+          "turnstileToken": {
+            "type": "string",
+            "x-nestjs_zod-uses-3-point-1-syntax": true,
+            "x-nestjs_zod-parent-additional-properties": false
+          }
+        },
+        "required": [
+          "email",
+          "consentGiven"
+        ]
+      }
+    }
   }
 }

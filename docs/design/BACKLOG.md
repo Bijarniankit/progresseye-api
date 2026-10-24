@@ -11,3 +11,29 @@ Deferred maintenance chores and dependency upgrades scheduled for execution at t
 7. **Jest 30**: Upgrade `jest` and `@types/jest` to 30.x in `progresseye-api` once ts-jest / NestJS testing ecosystem stabilizes (closed Dependabot PR #7; major ignored in `dependabot.yml`).
 8. **git identity**: Configure official `user.name` and `user.email` locally across both repositories per owner specification.
 9. **branch protection**: Verify and enforce GitHub branch protection rules (`Linux Verification (ubuntu-latest)`, branch up to date, no force push/deletions) on `main` for both repos.
+
+---
+
+## Phase 10: Launch Readiness & Deployment Checklist
+
+### 1. Trusted Proxy Reverse Proxy Configuration
+- **Context**: Fastify is configured with `trustProxy: true` in `src/main.ts` to extract the true client IP from `X-Forwarded-For` headers.
+- **Checklist Item**: When deploying to staging and production behind cloud load balancers (AWS ALB, Cloudflare edge, or Kubernetes Ingress / Traefik):
+  - Ensure edge proxy strips untrusted client-supplied `X-Forwarded-For` headers before appending client IP.
+  - Verify `X-Forwarded-Proto: https` is forwarded to ensure SSL redirection.
+  - Verify rate limiter and HMAC IP hashing evaluate the true client IP.
+
+### 2. Lead Data Retention Pruning Worker (`retention_until`)
+- **Context**: The `retention_until` column is provisioned on `public_leads` table, but automated deletion is deliberately deferred pending legal sign-off.
+- **Checklist Item**: Once legal counsel defines the statutory retention window under DPDP:
+  - Implement a daily scheduled BullMQ queue job (`lead-retention-pruner`) to delete records where `retention_until < NOW()`.
+
+### 3. Production Cloudflare Turnstile Configuration
+- **Checklist Item**: Configure real Cloudflare Turnstile site key and secret key in production environment secrets; enable `TURNSTILE_ENABLED=true`.
+
+### 4. Production Email Transport (AWS SES / Resend)
+- **Checklist Item**: Replace local SMTP / Mailpit default with managed transactional email transport with SPF/DKIM verification.
+
+### 5. Newsletter Double Opt-In Workflow
+- **Checklist Item**: Implement double opt-in confirmation email token dispatch and verification endpoint for newsletter subscribers.
+
