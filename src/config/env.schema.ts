@@ -1,10 +1,23 @@
 import { z } from "zod";
 
-export const envSchema = z.object({
+export const CLOUDFLARE_TEST_SECRETS = [
+  "1x0000000000000000000000000000000AA",
+  "2x0000000000000000000000000000000AA",
+  "3x0000000000000000000000000000000AA",
+] as const;
+
+export const baseEnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  APP_ENV: z.enum(["development", "staging", "production", "test"]).default("development"),
   PORT: z.coerce.number().default(4000),
   API_PREFIX: z.string().default("/api/v1"),
   CORS_ORIGIN: z.string().default("http://localhost:3000"),
+
+  // Reverse Proxy configuration
+  // Default is 0 (trustProxy: false) to prevent client IP spoofing when API is directly exposed.
+  // Set TRUSTED_PROXY_COUNT > 0 (e.g. 1 behind AWS ALB/Cloudflare) or TRUSTED_PROXIES (CIDR list).
+  TRUSTED_PROXY_COUNT: z.coerce.number().int().min(0).default(0),
+  TRUSTED_PROXIES: z.string().optional(),
 
   // Database (Supabase PostgreSQL / Direct)
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
@@ -45,7 +58,33 @@ export const envSchema = z.object({
   LEAD_NOTIFICATION_RECIPIENT: z.string().default("leads@progresseye.com"),
 });
 
-export type Env = z.infer<typeof envSchema>;
+export const envSchema = baseEnvSchema.superRefine((data, ctx) => {
+  const isProduction = data.APP_ENV === "production" || data.NODE_ENV === "production";
+  if (isProduction) {
+    if (data.TURNSTILE_ENABLED !== "true") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["TURNSTILE_ENABLED"],
+        message:
+          "TURNSTILE_ENABLED must be 'true' in production environment (fail-closed anti-abuse enforcement).",
+      });
+    }
+
+    if (
+      !data.TURNSTILE_SECRET_KEY ||
+      (CLOUDFLARE_TEST_SECRETS as readonly string[]).includes(data.TURNSTILE_SECRET_KEY)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["TURNSTILE_SECRET_KEY"],
+        message:
+          "TURNSTILE_SECRET_KEY cannot be empty or a Cloudflare test key in production. See https://developers.cloudflare.com/turnstile/troubleshooting/testing/",
+      });
+    }
+  }
+});
+
+export type Env = z.infer<typeof baseEnvSchema>;
 
 export function validateEnv(config: Record<string, unknown> = process.env): Env {
   const result = envSchema.safeParse(config);

@@ -6,11 +6,29 @@ import { apiReference } from "@scalar/nestjs-api-reference";
 import { Logger } from "nestjs-pino";
 import { AppModule } from "./app.module";
 import { AppConfigService } from "./config/config.service";
+import { validateEnv } from "./config/env.schema";
 
 async function bootstrap() {
+  const env = validateEnv(process.env);
+
+  let trustProxy: boolean | string | string[] | ((address: string, hop: number) => boolean) = false;
+  if (env.TRUSTED_PROXIES && env.TRUSTED_PROXIES.trim().length > 0) {
+    const proxies = env.TRUSTED_PROXIES.split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    if (proxies.length === 1 && proxies[0]) {
+      trustProxy = proxies[0];
+    } else if (proxies.length > 1) {
+      trustProxy = proxies;
+    }
+  } else if (env.TRUSTED_PROXY_COUNT > 0) {
+    const proxyCount = env.TRUSTED_PROXY_COUNT;
+    trustProxy = (_address: string, hop: number) => hop < proxyCount;
+  }
+
   const adapter = new FastifyAdapter({
     bodyLimit: 1048576, // 1MB body limit
-    trustProxy: true,
+    trustProxy,
   });
 
   const app = await NestFactory.create<NestFastifyApplication>(AppModule, adapter, {
