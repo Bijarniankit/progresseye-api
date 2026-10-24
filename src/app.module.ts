@@ -8,6 +8,7 @@ import { AppConfigService } from "./config/config.service";
 import { PrismaModule } from "./infra/prisma/prisma.module";
 import { RedisModule } from "./infra/redis/redis.module";
 import { ThrottlerStorageRedisService } from "./infra/redis/throttler-storage-redis.service";
+import { DiagnosticModule } from "./modules/platform/diagnostic/diagnostic.module";
 import { HealthModule } from "./modules/platform/health/health.module";
 import { PublicModule } from "./modules/public/public.module";
 
@@ -78,6 +79,7 @@ import { PublicModule } from "./modules/public/public.module";
     PrismaModule,
     RedisModule,
     HealthModule,
+    DiagnosticModule,
     PublicModule,
   ],
   controllers: [],
