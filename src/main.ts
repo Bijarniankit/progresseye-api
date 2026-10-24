@@ -7,6 +7,7 @@ import { Logger } from "nestjs-pino";
 import { AppModule } from "./app.module";
 import { AppConfigService } from "./config/config.service";
 import { validateEnv } from "./config/env.schema";
+import { getHelmetConfig } from "./config/helmet.config";
 
 async function bootstrap() {
   const env = validateEnv(process.env);
@@ -46,22 +47,10 @@ async function bootstrap() {
   app.setGlobalPrefix(apiPrefix);
 
   // Security: Helmet
-  await app.register(helmet as unknown as Parameters<typeof app.register>[0], {
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'"],
-        styleSrc: [
-          "'self'",
-          "'unsafe-inline'",
-          "https://cdn.jsdelivr.net",
-          "https://fonts.googleapis.com",
-        ],
-        fontSrc: ["'self'", "https://fonts.gstatic.com"],
-        imgSrc: ["'self'", "data:", "https:"],
-        scriptSrc: ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net"],
-      },
-    },
-  });
+  await app.register(
+    helmet as unknown as Parameters<typeof app.register>[0],
+    getHelmetConfig(config.get("APP_ENV")),
+  );
 
   // Security: Strict CORS
   app.enableCors({
