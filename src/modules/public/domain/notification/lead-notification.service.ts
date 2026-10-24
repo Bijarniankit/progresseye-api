@@ -195,13 +195,20 @@ export class LeadNotificationService implements OnModuleInit, OnModuleDestroy {
     const subject = `ProgressEye: new lead received (Ref: ${shortId})`;
     const recipient = this.config.get("LEAD_NOTIFICATION_RECIPIENT") || "leads@progresseye.com";
 
-    const bodyText = [
-      `New institutional inquiry received.`,
+    const bodyLines = [
+      "New institutional inquiry received.",
       `Type: ${lead.type}`,
       `Reference ID: ${lead.id}`,
       `Created: ${lead.createdAt.toISOString()}`,
-      `Consent Recorded: Yes (${lead.consentText})`,
-    ].join("\n");
+    ];
+
+    if (lead.name) bodyLines.push(`Name: ${lead.name}`);
+    if (lead.email) bodyLines.push(`Email: ${lead.email}`);
+    if (lead.schoolName) bodyLines.push(`School: ${lead.schoolName}`);
+    if (lead.message) bodyLines.push(`Message:\n${lead.message}`);
+    bodyLines.push(`Consent Recorded: Yes (${lead.consentText})`);
+
+    const bodyText = bodyLines.join("\n");
 
     await this.emailService.sendEmail({
       to: recipient,
