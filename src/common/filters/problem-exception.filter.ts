@@ -20,7 +20,13 @@ export class ProblemExceptionFilter implements ExceptionFilter {
     const request = ctx.getRequest<FastifyRequest>();
 
     const status =
-      exception instanceof HttpException ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
+      exception instanceof HttpException
+        ? exception.getStatus()
+        : typeof (exception as { statusCode?: number })?.statusCode === "number"
+          ? (exception as { statusCode: number }).statusCode
+          : typeof (exception as { status?: number })?.status === "number"
+            ? (exception as { status: number }).status
+            : HttpStatus.INTERNAL_SERVER_ERROR;
 
     const traceId =
       (request.headers["x-request-id"] as string | undefined) ?? request.id ?? "unknown";
@@ -68,6 +74,14 @@ export class ProblemExceptionFilter implements ExceptionFilter {
     detail: string;
     invalidParams?: Array<{ name: string; reason: string }>;
   } {
+    if (status === HttpStatus.PAYLOAD_TOO_LARGE) {
+      return {
+        code: ErrorCode.PAYLOAD_TOO_LARGE,
+        title: "Payload Too Large",
+        detail: "Request body size exceeds the allowable limit (16 kB).",
+      };
+    }
+
     if (exception instanceof HttpException) {
       const response = exception.getResponse();
 
@@ -76,14 +90,6 @@ export class ProblemExceptionFilter implements ExceptionFilter {
           code: ErrorCode.RATE_LIMIT_EXCEEDED,
           title: "Too Many Requests",
           detail: "Rate limit exceeded. Please wait before making more requests.",
-        };
-      }
-
-      if (status === HttpStatus.PAYLOAD_TOO_LARGE) {
-        return {
-          code: ErrorCode.PAYLOAD_TOO_LARGE,
-          title: "Payload Too Large",
-          detail: "Request body size exceeds the allowable limit (16 kB).",
         };
       }
 
@@ -194,6 +200,8 @@ export class ProblemExceptionFilter implements ExceptionFilter {
         return ErrorCode.CONFLICT;
       case HttpStatus.UNPROCESSABLE_ENTITY:
         return ErrorCode.UNPROCESSABLE_ENTITY;
+      case HttpStatus.PAYLOAD_TOO_LARGE:
+        return ErrorCode.PAYLOAD_TOO_LARGE;
       case HttpStatus.TOO_MANY_REQUESTS:
         return ErrorCode.RATE_LIMIT_EXCEEDED;
       case HttpStatus.SERVICE_UNAVAILABLE:
