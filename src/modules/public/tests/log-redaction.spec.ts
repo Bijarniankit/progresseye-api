@@ -4,6 +4,10 @@ describe("Pino Logging Redaction & Zero PII Leakage", () => {
   const redactPaths = [
     "req.headers.authorization",
     "req.headers.cookie",
+    'req.headers["x-forwarded-for"]',
+    'req.headers["x-real-ip"]',
+    'req.headers["cf-connecting-ip"]',
+    "req.remoteAddress",
     "body.password",
     "body.token",
     "body.secret",
@@ -91,6 +95,48 @@ describe("Pino Logging Redaction & Zero PII Leakage", () => {
 
     expect(capturedLog).not.toContain("subscriber.personal@gmail.com");
     expect(capturedLog).not.toContain("token-9999");
+    expect(capturedLog).toContain("[Redacted]");
+  });
+
+  it("redacts raw client IPs from x-forwarded-for, x-real-ip, and remoteAddress while preserving request id correlation", () => {
+    let capturedLog = "";
+    const logger = pino(
+      { redact: redactPaths },
+      {
+        write: (str: string) => {
+          capturedLog += str;
+        },
+      },
+    );
+
+    const spoofedIp = "203.0.113.195";
+    const remoteIp = "198.51.100.42";
+    const reqId = "req-correlation-id-abc-123";
+
+    logger.info(
+      {
+        req: {
+          id: reqId,
+          method: "POST",
+          url: "/api/v1/public/contact",
+          remoteAddress: remoteIp,
+          headers: {
+            "x-forwarded-for": spoofedIp,
+            "x-real-ip": spoofedIp,
+            "cf-connecting-ip": spoofedIp,
+            host: "api.progresseye.internal",
+          },
+        },
+      },
+      "Public request logged",
+    );
+
+    // Verify raw IPs are completely absent from the log
+    expect(capturedLog).not.toContain(spoofedIp);
+    expect(capturedLog).not.toContain(remoteIp);
+
+    // Verify request correlation ID is preserved
+    expect(capturedLog).toContain(reqId);
     expect(capturedLog).toContain("[Redacted]");
   });
 });

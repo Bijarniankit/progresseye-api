@@ -19,6 +19,9 @@ import { PublicModule } from "./modules/public/public.module";
       inject: [AppConfigService],
       useFactory: (config: AppConfigService) => ({
         pinoHttp: {
+          stream: (
+            globalThis as unknown as { __PINO_TEST_STREAM__?: import("node:stream").Writable }
+          ).__PINO_TEST_STREAM__,
           level: config.get("LOG_LEVEL"),
           transport: config.isDevelopment
             ? {
@@ -38,6 +41,10 @@ import { PublicModule } from "./modules/public/public.module";
           redact: [
             "req.headers.authorization",
             "req.headers.cookie",
+            'req.headers["x-forwarded-for"]',
+            'req.headers["x-real-ip"]',
+            'req.headers["cf-connecting-ip"]',
+            "req.remoteAddress",
             "body.password",
             "body.token",
             "body.secret",
