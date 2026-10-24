@@ -1,3 +1,4 @@
+import { Writable } from "node:stream";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { type Lead, LeadStatus, LeadType, type Prisma } from "@prisma/client";
@@ -12,11 +13,21 @@ jest.setTimeout(30000);
 describe("Public Leads API E2E Tests", () => {
   let app: NestFastifyApplication;
   let prismaService: PrismaService;
+  const testLogBuffer: string[] = [];
 
   beforeAll(async () => {
     process.env.DATABASE_URL = "postgresql://postgres:postgrespassword@localhost:5432/test_db";
     process.env.THROTTLE_LIMIT = "100";
     process.env.THROTTLE_TTL = "60000";
+
+    // Route Pino logs to in-memory test stream for assertion verification
+    (globalThis as unknown as { __PINO_TEST_STREAM__: Writable }).__PINO_TEST_STREAM__ =
+      new Writable({
+        write(chunk, _enc, cb) {
+          testLogBuffer.push(chunk.toString());
+          cb();
+        },
+      });
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -40,6 +51,7 @@ describe("Public Leads API E2E Tests", () => {
   });
 
   afterAll(async () => {
+    delete (globalThis as unknown as { __PINO_TEST_STREAM__?: Writable }).__PINO_TEST_STREAM__;
     if (app) {
       await app.close();
     }
@@ -452,6 +464,49 @@ describe("Public Leads API E2E Tests", () => {
       });
       expect(notifiedLead).toBeDefined();
       expect(notifiedLead?.notifiedAt).toBeTruthy();
+    });
+
+    it("redacts spoofed client IP from request logs when submitting to public lead endpoint", async () => {
+      const spoofedIp = "203.0.113.88";
+      const startLogCount = testLogBuffer.length;
+
+      const mockLead = {
+        id: "a0000000-0000-0000-0000-000000000099",
+        type: LeadType.CONTACT,
+        name: "Principal Test",
+        email: "principal.test@redaction.example",
+        schoolName: "Redaction Test Academy",
+        message: "Testing IP redaction in captured server logs",
+        status: LeadStatus.NEW,
+        consentText: "Consent text",
+        consentedAt: new Date(),
+        createdAt: new Date("2026-10-24T10:00:00.000Z"),
+        updatedAt: new Date("2026-10-24T10:00:00.000Z"),
+      };
+      jest.spyOn(prismaService.lead, "create").mockResolvedValueOnce(mockLead as never);
+
+      await request(app.getHttpServer())
+        .post("/api/v1/public/contact")
+        .set("Content-Type", "application/json")
+        .set("X-Forwarded-For", spoofedIp)
+        .set("X-Request-ID", "req-test-ip-redaction-e2e")
+        .send({
+          name: "Principal Test",
+          email: "principal.test@redaction.example",
+          schoolName: "Redaction Test Academy",
+          message: "Testing IP redaction in captured server logs",
+          consentGiven: true,
+        })
+        .expect(201);
+
+      // Await next event-loop tick so Fastify's onResponse logging finishes
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const newLogs = testLogBuffer.slice(startLogCount).join("\n");
+      // Raw spoofed IP must NOT appear in the captured logs
+      expect(newLogs).not.toContain(spoofedIp);
+      expect(newLogs).toContain("[Redacted]");
+      expect(newLogs).toContain("req-test-ip-redaction-e2e");
     });
   });
 });
