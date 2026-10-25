@@ -49,6 +49,9 @@ export const baseEnvSchema = z.object({
   TURNSTILE_ENABLED: z.string().default("false"),
   TURNSTILE_SECRET_KEY: z.string().default("1x0000000000000000000000000000000AA"),
 
+  // Diagnostics (staging/dev only)
+  DIAGNOSTICS_ENABLED: z.coerce.boolean().default(false),
+
   // Email & Notifications (Mailpit locally: localhost:1025)
   SMTP_HOST: z.string().default("localhost"),
   SMTP_PORT: z.coerce.number().default(1025),
@@ -61,6 +64,14 @@ export const baseEnvSchema = z.object({
 export const envSchema = baseEnvSchema.superRefine((data, ctx) => {
   const isProduction = data.APP_ENV === "production" || data.NODE_ENV === "production";
   if (isProduction) {
+    if (data.DIAGNOSTICS_ENABLED === true) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["DIAGNOSTICS_ENABLED"],
+        message: "DIAGNOSTICS_ENABLED cannot be true when APP_ENV is production.",
+      });
+    }
+
     if (data.TURNSTILE_ENABLED !== "true") {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
