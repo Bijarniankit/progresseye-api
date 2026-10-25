@@ -36,34 +36,6 @@
         ]
       }
     },
-    "/api/v1/diagnostic/hop-trace": {
-      "get": {
-        "description": "Returns hop count and truncated IP hash prefix for ingress calibration. Never exposes raw IP addresses.",
-        "operationId": "DiagnosticController_getHopTrace",
-        "parameters": [
-          {
-            "name": "x-forwarded-for",
-            "required": true,
-            "in": "header",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Hop trace diagnostic metadata"
-          },
-          "404": {
-            "description": "Diagnostic endpoints are disabled in production"
-          }
-        },
-        "summary": "Diagnostic hop trace (staging/dev only)",
-        "tags": [
-          "Diagnostic"
-        ]
-      }
-    },
     "/api/v1/public/contact": {
       "post": {
         "description": "Registers an institutional contact inquiry from the public marketing website.",

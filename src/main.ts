@@ -67,32 +67,39 @@ async function bootstrap() {
     ],
   });
 
-  // OpenAPI setup
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle("ProgressEye API")
-    .setDescription("ProgressEye 2.0 Multi-Tenant School Management API")
-    .setVersion("1.0.0")
-    .addBearerAuth()
-    .build();
+  // OpenAPI & Scalar docs setup (disabled in production)
+  const isProduction = config.get("APP_ENV") === "production";
+  if (!isProduction) {
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle("ProgressEye API")
+      .setDescription("ProgressEye 2.0 Multi-Tenant School Management API")
+      .setVersion("1.0.0")
+      .addBearerAuth()
+      .build();
 
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
 
-  // Raw JSON spec endpoint
-  const fastify = app.getHttpAdapter().getInstance();
-  fastify.get(`${apiPrefix}/openapi.json`, (_req, reply) => {
-    reply.header("Content-Type", "application/json").send(document);
-  });
+    // Raw JSON spec endpoint
+    const fastify = app.getHttpAdapter().getInstance();
+    fastify.get(`${apiPrefix}/openapi.json`, (_req, reply) => {
+      reply.header("Content-Type", "application/json").send(document);
+    });
 
-  // Scalar docs UI at /docs
-  const scalarHandler = apiReference({
-    spec: {
-      content: document,
-    },
-    withFastify: true,
-  });
-  fastify.get("/docs", (req, reply) => {
-    (scalarHandler as unknown as (req: unknown, res: unknown) => void)(req.raw, reply.raw);
-  });
+    // Scalar docs UI at /docs with scoped CDN allowances for Swagger/Scalar
+    const scalarHandler = apiReference({
+      spec: {
+        content: document,
+      },
+      withFastify: true,
+    });
+    fastify.get("/docs", (req, reply) => {
+      reply.header(
+        "Content-Security-Policy-Report-Only",
+        "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; frame-ancestors 'none'",
+      );
+      (scalarHandler as unknown as (req: unknown, res: unknown) => void)(req.raw, reply.raw);
+    });
+  }
 
   const port = config.get("PORT");
   await app.listen(port, "0.0.0.0");

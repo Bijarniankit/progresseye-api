@@ -1,8 +1,7 @@
 import helmet from "@fastify/helmet";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
 import { Test, type TestingModule } from "@nestjs/testing";
-
-import request = require("supertest");
+import request from "supertest";
 
 import { AppModule } from "../../src/app.module";
 import { getHelmetConfig } from "../../src/config/helmet.config";
@@ -30,7 +29,7 @@ describe("Security Headers E2E Tests", () => {
     jest.spyOn(prismaService, "ping").mockResolvedValue(true);
     jest.spyOn(redisService, "ping").mockResolvedValue(true);
 
-    // Register helmet with Phase 10 configuration
+    // Register helmet with staging configuration
     await app.register(
       helmet as unknown as Parameters<typeof app.register>[0],
       getHelmetConfig("staging"),
@@ -46,12 +45,15 @@ describe("Security Headers E2E Tests", () => {
     }
   });
 
-  it("enforces Content-Security-Policy-Report-Only without a public report endpoint", async () => {
+  it("enforces Content-Security-Policy-Report-Only without a public report endpoint and without CDN leak", async () => {
     const res = await request(app.getHttpServer()).get("/api/v1/health/live");
 
     expect(res.headers["content-security-policy-report-only"]).toBeDefined();
     const csp = res.headers["content-security-policy-report-only"];
     expect(csp).toContain("default-src 'self'");
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).not.toContain("cdn.jsdelivr.net");
+    expect(csp).not.toContain("fonts.googleapis.com");
     expect(csp).not.toContain("report-uri");
   });
 
@@ -63,6 +65,15 @@ describe("Security Headers E2E Tests", () => {
     expect(hsts).toContain("max-age=86400");
     expect(hsts).not.toContain("includeSubDomains");
     expect(hsts).not.toContain("preload");
+  });
+
+  it("produces separate 1-year HSTS production config without preload or includeSubDomains", () => {
+    const prodConfig = getHelmetConfig("production");
+    expect(prodConfig.hsts).toEqual({
+      maxAge: 31536000,
+      includeSubDomains: false,
+      preload: false,
+    });
   });
 
   it("enforces standard anti-framing and MIME sniffing protection", async () => {

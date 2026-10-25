@@ -29,6 +29,31 @@ describe("Environment Configuration Validation", () => {
     expect(env.LOG_LEVEL).toBe("info");
     expect(env.TRUSTED_PROXY_COUNT).toBe(0);
     expect(env.TRUSTED_PROXIES).toBeUndefined();
+    expect(env.DIAGNOSTICS_ENABLED).toBe(false);
+  });
+
+  describe("Diagnostics Opt-In and Production Guard", () => {
+    it("should allow DIAGNOSTICS_ENABLED=true in development or staging", () => {
+      const env = validateEnv({
+        APP_ENV: "staging",
+        DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/staging_db",
+        DIAGNOSTICS_ENABLED: "true",
+      });
+      expect(env.DIAGNOSTICS_ENABLED).toBe(true);
+    });
+
+    it("should reject DIAGNOSTICS_ENABLED=true when APP_ENV is production", () => {
+      expect(() =>
+        validateEnv({
+          APP_ENV: "production",
+          NODE_ENV: "production",
+          DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/prod_db",
+          TURNSTILE_ENABLED: "true",
+          TURNSTILE_SECRET_KEY: "0x4AAAAAAAxRealCloudflareSecretKeyExample",
+          DIAGNOSTICS_ENABLED: "true",
+        }),
+      ).toThrow(/DIAGNOSTICS_ENABLED cannot be true when APP_ENV is production/);
+    });
   });
 
   describe("Turnstile Fail-Closed Enforcement in Production", () => {
