@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, Logger } from "@nestjs/common";
+import { ErrorCode } from "../../../../common/errors/error-codes.enum";
 import { AppConfigService } from "../../../../config/config.service";
 
 export interface SpamVerificationResult {
@@ -55,7 +56,10 @@ export class TurnstileService implements ISpamVerificationService {
 
     if (!token || token.trim().length === 0) {
       this.logger.warn("Turnstile verification failed: missing token");
-      throw new BadRequestException("Spam verification token is required");
+      throw new BadRequestException({
+        code: ErrorCode.SPAM_VERIFICATION_FAILED,
+        message: "Spam verification token is required",
+      });
     }
 
     const secret = this.getSecretKey();
@@ -63,7 +67,10 @@ export class TurnstileService implements ISpamVerificationService {
     // Dev/Test mode fast-path: check Cloudflare documented test tokens
     if (secret === TurnstileService.TEST_BLOCK_SECRET) {
       this.logger.warn("Turnstile test block secret matched; rejecting token");
-      throw new BadRequestException("Spam verification failed");
+      throw new BadRequestException({
+        code: ErrorCode.SPAM_VERIFICATION_FAILED,
+        message: "Spam verification failed",
+      });
     }
 
     if (
@@ -88,7 +95,10 @@ export class TurnstileService implements ISpamVerificationService {
 
       if (!response.ok) {
         this.logger.error(`Turnstile siteverify returned HTTP ${response.status}`);
-        throw new BadRequestException("Spam verification failed");
+        throw new BadRequestException({
+          code: ErrorCode.SPAM_VERIFICATION_FAILED,
+          message: "Spam verification failed",
+        });
       }
 
       const outcome = (await response.json()) as {
@@ -101,7 +111,10 @@ export class TurnstileService implements ISpamVerificationService {
           event: "turnstile_verification_failed",
           errorCodes: outcome["error-codes"],
         });
-        throw new BadRequestException("Spam verification failed");
+        throw new BadRequestException({
+          code: ErrorCode.SPAM_VERIFICATION_FAILED,
+          message: "Spam verification failed",
+        });
       }
 
       return { success: true };
@@ -114,7 +127,10 @@ export class TurnstileService implements ISpamVerificationService {
         error: (err as Error).message,
       });
       // Fail closed: reject request on network/timeout errors
-      throw new BadRequestException("Spam verification service unavailable");
+      throw new BadRequestException({
+        code: ErrorCode.SPAM_VERIFICATION_FAILED,
+        message: "Spam verification service unavailable",
+      });
     }
   }
 }

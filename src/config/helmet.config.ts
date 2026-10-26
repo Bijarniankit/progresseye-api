@@ -18,9 +18,9 @@ export const getHelmetConfig = (
       },
     },
     hsts: {
-      // 1 year (31536000s) in production; 1 day (86400s) on staging/dev.
+      // 5 min (300s) initial ramp in production per rollout runbook; 1 day (86400s) on staging/dev.
       // Explicitly NO preload and NO includeSubDomains until custom domain is finalized.
-      maxAge: isProduction ? 31536000 : 86400,
+      maxAge: isProduction ? 300 : 86400,
       includeSubDomains: false,
       preload: false,
     },

@@ -67,10 +67,10 @@ describe("Security Headers E2E Tests", () => {
     expect(hsts).not.toContain("preload");
   });
 
-  it("produces separate 1-year HSTS production config without preload or includeSubDomains", () => {
+  it("produces separate 5-minute initial ramp HSTS production config without preload or includeSubDomains", () => {
     const prodConfig = getHelmetConfig("production");
     expect(prodConfig.hsts).toEqual({
-      maxAge: 31536000,
+      maxAge: 300,
       includeSubDomains: false,
       preload: false,
     });

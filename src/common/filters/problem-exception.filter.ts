@@ -131,13 +131,19 @@ export class ProblemExceptionFilter implements ExceptionFilter {
 
       if (status === HttpStatus.BAD_REQUEST) {
         let detail = "Invalid request payload or parameters.";
+        let code = ErrorCode.VALIDATION_ERROR;
         let invalidParams: Array<{ name: string; reason: string }> | undefined;
 
         if (typeof response === "object" && response !== null) {
           const resp = response as {
+            code?: ErrorCode;
             message?: string | string[];
             errors?: Array<{ path?: string[]; message?: string }>;
           };
+
+          if (resp.code && Object.values(ErrorCode).includes(resp.code)) {
+            code = resp.code;
+          }
 
           if (Array.isArray(resp.message)) {
             detail = resp.message.join("; ");
@@ -154,7 +160,7 @@ export class ProblemExceptionFilter implements ExceptionFilter {
         }
 
         return {
-          code: ErrorCode.VALIDATION_ERROR,
+          code,
           title: "Bad Request",
           detail,
           invalidParams,

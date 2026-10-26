@@ -1,4 +1,5 @@
 import { Writable } from "node:stream";
+import { BadRequestException } from "@nestjs/common";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { type Lead, LeadStatus, LeadType, type Prisma } from "@prisma/client";
@@ -6,7 +7,12 @@ import { type Lead, LeadStatus, LeadType, type Prisma } from "@prisma/client";
 import request = require("supertest");
 
 import { AppModule } from "../../src/app.module";
+import { ErrorCode } from "../../src/common/errors/error-codes.enum";
 import { PrismaService } from "../../src/infra/prisma/prisma.service";
+import {
+  SPAM_VERIFICATION_SERVICE,
+  TurnstileService,
+} from "../../src/modules/public/domain/anti-abuse/spam-verification.service";
 
 jest.setTimeout(30000);
 
@@ -156,6 +162,37 @@ describe("Public Leads API E2E Tests", () => {
 
       expect(response.headers["content-type"]).toContain("application/problem+json");
       expect(response.body).toHaveProperty("code", "VALIDATION_ERROR");
+    });
+
+    it("returns 400 with machine-readable code SPAM_VERIFICATION_FAILED when spam verification fails", async () => {
+      const spamService = app.get<TurnstileService>(SPAM_VERIFICATION_SERVICE);
+      jest.spyOn(spamService, "verifyToken").mockRejectedValueOnce(
+        new BadRequestException({
+          code: ErrorCode.SPAM_VERIFICATION_FAILED,
+          message: "Spam verification failed",
+        }),
+      );
+
+      const response = await request(app.getHttpServer())
+        .post("/api/v1/public/contact")
+        .set("Content-Type", "application/json")
+        .send({
+          name: "Dr. Test",
+          email: "test@school.edu.in",
+          schoolName: "Test School",
+          message: "Inquiry message for spam testing",
+          consentGiven: true,
+          turnstileToken: "invalid-token",
+        })
+        .expect(400);
+
+      expect(response.headers["content-type"]).toContain("application/problem+json");
+      expect(response.body).toHaveProperty("code", "SPAM_VERIFICATION_FAILED");
+      expect(response.body).toHaveProperty("title", "Bad Request");
+      expect(response.body).toHaveProperty(
+        "type",
+        "https://api.progresseye.com/errors/SPAM_VERIFICATION_FAILED",
+      );
     });
 
     it("rejects non-JSON Content-Type with 400 Problem Details", async () => {
