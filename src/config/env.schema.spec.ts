@@ -111,4 +111,23 @@ describe("Environment Configuration Validation", () => {
       expect(env.TURNSTILE_SECRET_KEY).toBe("0x4AAAAAAAxRealCloudflareSecretKeyExample");
     });
   });
+
+  describe("HSTS_MAX_AGE_SECONDS configuration", () => {
+    it("should accept valid non-negative integer for HSTS_MAX_AGE_SECONDS", () => {
+      const env = validateEnv({
+        DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/test_db",
+        HSTS_MAX_AGE_SECONDS: "604800",
+      });
+      expect(env.HSTS_MAX_AGE_SECONDS).toBe(604800);
+    });
+
+    it("should reject negative values for HSTS_MAX_AGE_SECONDS", () => {
+      expect(() =>
+        validateEnv({
+          DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/test_db",
+          HSTS_MAX_AGE_SECONDS: "-1",
+        }),
+      ).toThrow(/Configuration validation failed:.*HSTS_MAX_AGE_SECONDS/s);
+    });
+  });
 });
