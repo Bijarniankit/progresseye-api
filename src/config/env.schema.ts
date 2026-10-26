@@ -49,6 +49,9 @@ export const baseEnvSchema = z.object({
   TURNSTILE_ENABLED: z.string().default("false"),
   TURNSTILE_SECRET_KEY: z.string().default("1x0000000000000000000000000000000AA"),
 
+  // HSTS configuration override (in seconds)
+  HSTS_MAX_AGE_SECONDS: z.coerce.number().int().nonnegative().optional(),
+
   // Diagnostics (staging/dev only)
   DIAGNOSTICS_ENABLED: z.coerce.boolean().default(false),
 

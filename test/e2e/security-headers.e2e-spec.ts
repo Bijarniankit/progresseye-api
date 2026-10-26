@@ -76,6 +76,20 @@ describe("Security Headers E2E Tests", () => {
     });
   });
 
+  it("honors HSTS_MAX_AGE_SECONDS environment override when provided", () => {
+    process.env.HSTS_MAX_AGE_SECONDS = "604800";
+    try {
+      const config = getHelmetConfig("production");
+      expect(config.hsts).toEqual({
+        maxAge: 604800,
+        includeSubDomains: false,
+        preload: false,
+      });
+    } finally {
+      delete process.env.HSTS_MAX_AGE_SECONDS;
+    }
+  });
+
   it("enforces standard anti-framing and MIME sniffing protection", async () => {
     const res = await request(app.getHttpServer()).get("/api/v1/health/live");
 
