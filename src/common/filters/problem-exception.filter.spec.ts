@@ -1,4 +1,9 @@
-import { type ArgumentsHost, HttpStatus, NotFoundException } from "@nestjs/common";
+import {
+  type ArgumentsHost,
+  BadRequestException,
+  HttpStatus,
+  NotFoundException,
+} from "@nestjs/common";
 import { ErrorCode } from "../errors/error-codes.enum";
 import { ProblemExceptionFilter } from "./problem-exception.filter";
 
@@ -73,6 +78,28 @@ describe("ProblemExceptionFilter", () => {
         type: "https://api.progresseye.com/errors/INTERNAL_SERVER_ERROR",
         status: HttpStatus.INTERNAL_SERVER_ERROR,
         code: ErrorCode.INTERNAL_SERVER_ERROR,
+      }),
+    );
+  });
+
+  it("should preserve specific ErrorCode when passed in BadRequestException payload", () => {
+    const exception = new BadRequestException({
+      code: ErrorCode.SPAM_VERIFICATION_FAILED,
+      message: "Spam verification failed",
+    });
+
+    filter.catch(exception, mockHost as unknown as ArgumentsHost);
+
+    expect(mockReply.status).toHaveBeenCalledWith(HttpStatus.BAD_REQUEST);
+    expect(mockReply.header).toHaveBeenCalledWith("Content-Type", "application/problem+json");
+    expect(mockReply.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "https://api.progresseye.com/errors/SPAM_VERIFICATION_FAILED",
+        status: HttpStatus.BAD_REQUEST,
+        title: "Bad Request",
+        detail: "Spam verification failed",
+        code: ErrorCode.SPAM_VERIFICATION_FAILED,
+        traceId: "test-req-123",
       }),
     );
   });
