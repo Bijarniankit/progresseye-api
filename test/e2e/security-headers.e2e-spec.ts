@@ -90,6 +90,22 @@ describe("Security Headers E2E Tests", () => {
     }
   });
 
+  it("honors HSTS_INCLUDE_SUBDOMAINS and HSTS_PRELOAD environment overrides separately", () => {
+    process.env.HSTS_INCLUDE_SUBDOMAINS = "true";
+    process.env.HSTS_PRELOAD = "true";
+    try {
+      const config = getHelmetConfig("production");
+      expect(config.hsts).toEqual({
+        maxAge: 300,
+        includeSubDomains: true,
+        preload: true,
+      });
+    } finally {
+      delete process.env.HSTS_INCLUDE_SUBDOMAINS;
+      delete process.env.HSTS_PRELOAD;
+    }
+  });
+
   it("enforces standard anti-framing and MIME sniffing protection", async () => {
     const res = await request(app.getHttpServer()).get("/api/v1/health/live");
 

@@ -20,14 +20,14 @@ export const getHelmetConfig = (
     hsts: {
       // Configurable via HSTS_MAX_AGE_SECONDS env var.
       // 5 min (300s) initial ramp in production per rollout runbook; 1 day (86400s) on staging/dev.
-      // Explicitly NO preload and NO includeSubDomains until custom domain is finalized.
+      // includeSubDomains and preload default strictly to false; enabled only via separate flags at Stage 4.
       maxAge: process.env.HSTS_MAX_AGE_SECONDS
         ? Number.parseInt(process.env.HSTS_MAX_AGE_SECONDS, 10)
         : isProduction
           ? 300
           : 86400,
-      includeSubDomains: false,
-      preload: false,
+      includeSubDomains: process.env.HSTS_INCLUDE_SUBDOMAINS === "true",
+      preload: process.env.HSTS_PRELOAD === "true",
     },
     frameguard: { action: "deny" },
   };
