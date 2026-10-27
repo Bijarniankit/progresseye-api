@@ -51,6 +51,8 @@ export const baseEnvSchema = z.object({
 
   // HSTS configuration override (in seconds)
   HSTS_MAX_AGE_SECONDS: z.coerce.number().int().nonnegative().optional(),
+  HSTS_INCLUDE_SUBDOMAINS: z.enum(["true", "false"]).optional(),
+  HSTS_PRELOAD: z.enum(["true", "false"]).optional(),
 
   // Diagnostics (staging/dev only)
   DIAGNOSTICS_ENABLED: z.coerce.boolean().default(false),

@@ -129,5 +129,23 @@ describe("Environment Configuration Validation", () => {
         }),
       ).toThrow(/Configuration validation failed:.*HSTS_MAX_AGE_SECONDS/s);
     });
+
+    it("should accept valid boolean string flags for HSTS_INCLUDE_SUBDOMAINS and HSTS_PRELOAD", () => {
+      const env = validateEnv({
+        DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/test_db",
+        HSTS_INCLUDE_SUBDOMAINS: "true",
+        HSTS_PRELOAD: "false",
+      });
+      expect(env.HSTS_INCLUDE_SUBDOMAINS).toBe("true");
+      expect(env.HSTS_PRELOAD).toBe("false");
+    });
+
+    it("should default HSTS_INCLUDE_SUBDOMAINS and HSTS_PRELOAD to undefined", () => {
+      const env = validateEnv({
+        DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/test_db",
+      });
+      expect(env.HSTS_INCLUDE_SUBDOMAINS).toBeUndefined();
+      expect(env.HSTS_PRELOAD).toBeUndefined();
+    });
   });
 });
