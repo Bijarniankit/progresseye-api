@@ -191,7 +191,7 @@ describe("Public Leads API E2E Tests", () => {
       expect(response.body).toHaveProperty("title", "Bad Request");
       expect(response.body).toHaveProperty(
         "type",
-        "https://api.progresseye.com/errors/SPAM_VERIFICATION_FAILED",
+        "https://api.progresseye.in/errors/SPAM_VERIFICATION_FAILED",
       );
     });
 
