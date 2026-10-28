@@ -62,8 +62,8 @@ export const baseEnvSchema = z.object({
   SMTP_PORT: z.coerce.number().default(1025),
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
-  MAIL_FROM: z.string().default("noreply@progresseye.com"),
-  LEAD_NOTIFICATION_RECIPIENT: z.string().default("leads@progresseye.com"),
+  MAIL_FROM: z.string().default("noreply@progresseye.in"),
+  LEAD_NOTIFICATION_RECIPIENT: z.string().default("leads@progresseye.in"),
 });
 
 export const envSchema = baseEnvSchema.superRefine((data, ctx) => {
