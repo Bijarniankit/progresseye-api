@@ -1,0 +1,88 @@
+# DigitalOcean App Platform Specification — ProgressEye API
+# Region: blr1 (Bangalore, India)
+name: progresseye-api
+region: blr
+
+services:
+  - name: api
+    github:
+      branch: main
+      deploy_on_push: true
+      repo: Bijarniankit/progresseye-api
+    source_dir: /
+    dockerfilePath: Dockerfile
+    http_port: 4000
+    instance_count: 1
+    instance_size_slug: basic-xxs # $5/month starter tier (UNVERIFIED)
+    routes:
+      - path: /api
+    health_check:
+      http_path: /api/v1/health/live
+      initial_delay_seconds: 15
+      period_seconds: 10
+      timeout_seconds: 5
+      success_threshold: 1
+      failure_threshold: 3
+    envs:
+      - key: NODE_ENV
+        value: production
+      - key: APP_ENV
+        value: staging
+      - key: PORT
+        value: "4000"
+      - key: API_PREFIX
+        value: /api/v1
+      - key: CORS_ORIGIN
+        value: https://staging.progresseye.in,https://progresseye.in
+      - key: LOG_LEVEL
+        value: info
+      - key: TRUSTED_PROXY_COUNT
+        value: "1" # DigitalOcean App Platform ingress proxy (1 hop)
+      - key: DATABASE_URL
+        value: ${db.DATABASE_URL}
+      - key: DIRECT_URL
+        value: ${db.DATABASE_URL}
+      - key: REDIS_HOST
+        value: ${redis.HOSTNAME}
+      - key: REDIS_PORT
+        value: ${redis.PORT}
+      - key: REDIS_PASSWORD
+        value: ${redis.PASSWORD}
+      - key: THROTTLE_TTL
+        value: "60000"
+      - key: THROTTLE_LIMIT
+        value: "100"
+      - key: JWT_ACCESS_SECRET
+        type: SECRET
+      - key: JWT_REFRESH_SECRET
+        type: SECRET
+      - key: LEAD_IP_HMAC_SECRET
+        type: SECRET
+      - key: TURNSTILE_ENABLED
+        value: "false"
+      - key: TURNSTILE_SECRET_KEY
+        value: "1x0000000000000000000000000000000AA"
+      - key: SMTP_HOST
+        value: email-smtp.ap-south-1.amazonaws.com # AWS SES Mumbai
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        type: SECRET
+      - key: SMTP_PASS
+        type: SECRET
+      - key: MAIL_FROM
+        value: noreply@progresseye.in
+      - key: LEAD_NOTIFICATION_RECIPIENT
+        value: leads@progresseye.in
+
+databases:
+  - name: db
+    engine: PG
+    version: "16"
+    production: false # Staging tier ($15/mo basic dev DB, UNVERIFIED)
+    cluster_name: progresseye-staging-db
+  - name: redis
+    engine: REDIS
+    version: "7"
+    production: false # Staging tier ($15/mo basic Redis, UNVERIFIED)
+    cluster_name: progresseye-staging-redis

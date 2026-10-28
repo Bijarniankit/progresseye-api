@@ -34,7 +34,7 @@ export class ProblemExceptionFilter implements ExceptionFilter {
     const { code, title, detail, invalidParams } = this.extractErrorMetadata(exception, status);
 
     const problem: ProblemDetails = {
-      type: `https://api.progresseye.com/errors/${code}`,
+      type: `https://api.progresseye.in/errors/${code}`,
       title,
       status,
       detail,
