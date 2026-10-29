@@ -1,147 +1,159 @@
 # ProgressEye Staging Owner Checklist — DigitalOcean BLR1 & AWS SES Mumbai
 
 > **Target Environment**: Staging Pilot  
-> **Canonical Domain**: `progresseye.in` (Staging host: `staging.progresseye.in`, API: `staging-api.progresseye.in`)  
+> **Canonical Domain**: `progresseye.in` (Staging host: `staging.progresseye.in`)  
 > **Target Providers**: DigitalOcean (Region: `blr1` - Bangalore, India) + AWS SES (Region: `ap-south-1` - Mumbai, India)  
-> **Status**: Ready for Owner Provisioning. All cost figures and UI flows marked `[UNVERIFIED]` pending live portal verification.
+> **Status**: Ready for Owner Provisioning. All cost figures and unverified console flows marked `[UNVERIFIED - requires live verification]`.
 
 ---
 
-## Part 1: DigitalOcean BLR1 (Bangalore) Setup
+## Table of Contents
+1. [Provider Provisioning Sequence](#provider-provisioning-sequence)
+2. [Part 1: Domain Registrar & DNS Configuration](#part-1-domain-registrar--dns-configuration)
+3. [Part 2: DigitalOcean BLR1 (Bangalore) Infrastructure](#part-2-digitalocean-blr1-bangalore-infrastructure)
+   - [Step 2.1: Project Setup](#step-21-project-setup)
+   - [Step 2.2: Managed PostgreSQL 17](#step-22-managed-postgresql-17)
+   - [Step 2.3: Managed Valkey / Redis](#step-23-managed-valkey--redis)
+   - [Step 2.4: App Platform (Web & API)](#step-24-app-platform-web--api)
+4. [Part 3: AWS SES Mumbai (ap-south-1) Configuration](#part-3-aws-ses-mumbai-ap-south-1-configuration)
+   - [Step 3.1: Domain Identity & DKIM](#step-31-domain-identity--dkim)
+   - [Step 3.2: SMTP Credentials](#step-32-smtp-credentials)
+   - [Step 3.3: Production Sandbox Exit](#step-33-production-sandbox-exit)
+5. [Part 4: Cloudflare Turnstile Anti-Abuse](#part-4-cloudflare-turnstile-anti-abuse)
+6. [Part 5: External Uptime Monitoring](#part-5-external-uptime-monitoring)
+7. [Part 6: Secret Distribution Matrix](#part-6-secret-distribution-matrix)
+8. [Part 7: Monthly Cost Summary & Official Documentation URLs](#part-7-monthly-cost-summary--official-documentation-urls)
 
-### Step 1.1: Create Project & Region Context
+---
+
+## Provider Provisioning Sequence
+Provision providers strictly in this order to satisfy DNS and secret dependencies:
+1. **Registrar / DNS**: Register domain and configure nameservers.
+2. **DigitalOcean**: Provision Managed DBs (PostgreSQL 17, Valkey/Redis) and App Platform services.
+3. **AWS SES (ap-south-1)**: Verify domain, add DKIM/SPF DNS records, and generate SMTP credentials.
+4. **Cloudflare Turnstile**: Add site hostname `progresseye.in` / `staging.progresseye.in`, obtain Site Key & Secret Key.
+5. **Uptime Monitor**: Configure HTTPS liveness monitoring on `/api/v1/health/live` and `/`.
+
+---
+
+## Part 1: Domain Registrar & DNS Configuration
+1. Register `progresseye.in` at chosen registrar (e.g., INRegistry accredited registrars).
+2. Point DNS NS records to DigitalOcean Nameservers (`ns1.digitalocean.com`, `ns2.digitalocean.com`, `ns3.digitalocean.com`) or manage DNS directly.
+- **Official Docs**: [DigitalOcean DNS Management](https://docs.digitalocean.com/products/networking/dns/)
+
+---
+
+## Part 2: DigitalOcean BLR1 (Bangalore) Infrastructure
+
+### Step 2.1: Project Setup
 1. Log in to [DigitalOcean Cloud Console](https://cloud.digitalocean.com/).
 2. In the left navigation, click **Projects** > **+ New Project**.
 3. Name: `progresseye-staging`, Environment: `Staging`.
-4. Region confirmation: Ensure all resources default to datacenter **BLR1 (Bangalore, India)** for Indian data residency.
-- **Official Docs**: [DigitalOcean Projects Documentation](https://docs.digitalocean.com/products/projects/)
+4. Datacenter: Default to **BLR1 (Bangalore, India)** for Indian data residency.
+- **Official Docs**: [DigitalOcean Projects](https://docs.digitalocean.com/products/projects/)
 
----
-
-### Step 1.2: Provision Managed PostgreSQL 16
+### Step 2.2: Managed PostgreSQL 17
 1. Click **Create** > **Databases**.
-2. Database Engine: Select **PostgreSQL**, Version **16**.
-3. Datacenter: Select **Bangalore (BLR1)**.
-4. Cluster Configuration: Select **Basic Nodes** (1 vCPU / 1 GB RAM / 10 GB Disk) for staging pilot.
-   - *Cost*: ~$15/month `[UNVERIFIED - requires live verification]`.
-5. Cluster Name: `progresseye-staging-db`.
-6. Click **Create Database Cluster**.
-7. Once provisioned:
-   - Go to **Connection details** tab.
-   - Note the **Connection Pool** connection string (`DATABASE_URL`) with `pgbouncer=true` and direct connection string.
-   - Restrict Trusted Sources to the App Platform app once created.
-- **Official Docs**: [DigitalOcean Managed Databases Overview](https://docs.digitalocean.com/products/databases/postgresql/)
+2. Engine: **PostgreSQL**, Version: **17**.
+3. Datacenter: **Bangalore (BLR1)**.
+4. Tier: **Basic Nodes** (1 vCPU / 1 GB RAM / 10 GB Disk) `[UNVERIFIED - requires live verification]`.
+5. Cluster Name: `progresseye-staging-pg`.
+6. Once provisioned, note:
+   - `DATABASE_URL` (Connection pool mode, PgBouncer port 25060, `sslmode=require`).
+   - `DIRECT_URL` (Direct node connection port 25061 for Prisma migrations).
+- **Official Docs**: [DigitalOcean Managed PostgreSQL](https://docs.digitalocean.com/products/databases/postgresql/)
 
----
-
-### Step 1.3: Provision Managed Redis 7
+### Step 2.3: Managed Valkey / Redis `[UNVERIFIED - requires live verification]`
+> [!NOTE]
+> DigitalOcean has transitioned new caching clusters to Valkey (open source Redis fork) while preserving Redis API compatibility.
 1. Click **Create** > **Databases**.
-2. Database Engine: Select **Redis**, Version **7**.
-3. Datacenter: Select **Bangalore (BLR1)**.
-4. Cluster Configuration: Select **Basic Nodes** (1 vCPU / 1 GB RAM / 10 GB Disk) for staging pilot.
-   - *Cost*: ~$15/month `[UNVERIFIED - requires live verification]`.
-5. Cluster Name: `progresseye-staging-redis`.
-6. Click **Create Database Cluster**.
-7. Note the Redis host, port, and password from connection details.
-- **Official Docs**: [DigitalOcean Managed Redis Documentation](https://docs.digitalocean.com/products/databases/redis/)
+2. Select **Valkey** (or **Redis** if available), Version **7 / 8**.
+3. Datacenter: **Bangalore (BLR1)**.
+4. Tier: **Basic Nodes** (1 vCPU / 1 GB RAM) `[UNVERIFIED - requires live verification]`.
+5. Name: `progresseye-staging-redis`.
+6. Record: `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_TLS=true`.
+- **Official Docs**: [DigitalOcean Valkey/Redis](https://docs.digitalocean.com/products/databases/valkey/)
+
+### Step 2.4: App Platform (Web & API)
+1. Deploy from GitHub repository `Bijarniankit/progresseye-api` and `Bijarniankit/progresseye-web` using `.do/app.yaml`.
+2. Region: `blr1`.
+3. Configure Healthcheck endpoints:
+   - API: `/api/v1/health/live` (HTTP 200)
+   - Web: `/` (HTTP 200)
+- **Official Docs**: [DigitalOcean App Platform](https://docs.digitalocean.com/products/app-platform/)
 
 ---
 
-### Step 1.4: Create App Platform Services (Web + API)
-1. In DigitalOcean Console, click **Create** > **Apps**.
-2. Source: Connect GitHub account, select repository `Bijarniankit/progresseye-web` and `Bijarniankit/progresseye-api`.
-3. Alternatively, deploy via App Spec using doctl CLI:
-   ```bash
-   doctl apps create --spec .do/app.yaml
-   ```
-4. Configure Secrets in App Platform settings (encrypted environment variables):
-   - `JWT_ACCESS_SECRET`: Generate via `openssl rand -hex 32`
-   - `JWT_REFRESH_SECRET`: Generate via `openssl rand -hex 32`
-   - `LEAD_IP_HMAC_SECRET`: Generate via `openssl rand -hex 32`
-   - `DATABASE_URL`: Copied from PostgreSQL cluster connection pool
-   - `REDIS_PASSWORD`: Copied from Redis cluster
-   - `SMTP_USER`: AWS SES SMTP username (from Part 2)
-   - `SMTP_PASS`: AWS SES SMTP password (from Part 2)
-- *Cost*: Basic XXS instance ($5/month per service) `[UNVERIFIED - requires live verification]`.
-- **Official Docs**: [DigitalOcean App Platform Overview](https://docs.digitalocean.com/products/app-platform/)
+## Part 3: AWS SES Mumbai (ap-south-1) Configuration
+
+### Step 3.1: Domain Identity & DKIM
+1. Log in to AWS Console > Region **ap-south-1 (Mumbai)**.
+2. Navigate to **Amazon Simple Email Service (SES)** > **Identities**.
+3. Click **Create Identity** > Domain: `progresseye.in`.
+4. Select **Easy DKIM** (RSA 2048-bit).
+5. Add the 3 generated CNAME records and MX/SPF records (`v=spf1 include:amazonses.com ~all`) to your DNS registrar.
+- **Official Docs**: [AWS SES Easy DKIM](https://docs.aws.amazon.com/ses/latest/dg/creating-identities.html)
+
+### Step 3.2: SMTP Credentials
+1. Under SES > **SMTP Settings**, click **Create SMTP credentials**.
+2. Note `SMTP_HOST`: `email-smtp.ap-south-1.amazonaws.com`, `SMTP_PORT`: `587`.
+3. Save generated IAM SMTP Username and Password.
+- **Official Docs**: [AWS SES SMTP Credentials](https://docs.aws.amazon.com/ses/latest/dg/smtp-credentials.html)
+
+### Step 3.3: Production Sandbox Exit `[UNVERIFIED - requires live verification]`
+1. Under SES > **Account dashboard**, click **Request production access**.
+2. Mail type: Transactional (institutional inquiry receipts & notifications).
+3. Compliance notes: Single opt-in lead forms with explicit consent checkbox, zero unsolicited cold outbound.
+- **Official Docs**: [AWS SES Sandbox Exit](https://docs.aws.amazon.com/ses/latest/dg/request-production-access.html)
 
 ---
 
-## Part 2: AWS Simple Email Service (SES) Mumbai (`ap-south-1`) Setup
-
-### Step 2.1: Verify Domain Identity
-1. Log in to [AWS Management Console](https://console.aws.amazon.com/ses/).
-2. Select Region: **Asia Pacific (Mumbai) `ap-south-1`** in the top navigation bar.
-3. In left navigation, click **Configuration** > **Identities**.
-4. Click **Create identity**.
-5. Identity type: Select **Domain**.
-6. Domain: Enter `progresseye.in`.
-7. Advanced DKIM settings: Select **Easy DKIM**, RSA 2048-bit.
-8. Click **Create identity**.
-- **Official Docs**: [AWS SES Creating a Domain Identity](https://docs.aws.amazon.com/ses/latest/dg/creating-identities.html)
+## Part 4: Cloudflare Turnstile Anti-Abuse
+1. Log in to Cloudflare Dashboard > **Turnstile**.
+2. Click **Add Site**.
+3. Name: `ProgressEye Staging`, Domain: `progresseye.in` and `staging.progresseye.in`.
+4. Widget Mode: **Managed** (Interactive challenge only upon suspicion).
+5. Copy `Site Key` -> `NEXT_PUBLIC_TURNSTILE_SITE_KEY`.
+6. Copy `Secret Key` -> `TURNSTILE_SECRET_KEY`.
+- **Official Docs**: [Cloudflare Turnstile Getting Started](https://developers.cloudflare.com/turnstile/get-started/)
 
 ---
 
-### Step 2.2: Add DNS Records at Domain Registrar
-AWS SES outputs 3 CNAME records for Easy DKIM. Add them at your DNS registrar:
-1. **DKIM Record 1**:
-   - Type: `CNAME`
-   - Name: `[token1]._domainkey.progresseye.in`
-   - Value: `[token1].dkim.amazonses.com`
-2. **DKIM Record 2**:
-   - Type: `CNAME`
-   - Name: `[token2]._domainkey.progresseye.in`
-   - Value: `[token2].dkim.amazonses.com`
-3. **DKIM Record 3**:
-   - Type: `CNAME`
-   - Name: `[token3]._domainkey.progresseye.in`
-   - Value: `[token3].dkim.amazonses.com`
-4. **SPF TXT Record**:
-   - Type: `TXT`
-   - Name: `@` (or `progresseye.in`)
-   - Value: `v=spf1 include:amazonses.com ~all`
-5. **DMARC TXT Record**:
-   - Type: `TXT`
-   - Name: `_dmarc.progresseye.in`
-   - Value: `v=DMARC1; p=none; rua=mailto:dmarc-reports@progresseye.in` (Note: `dmarc-reports` mailbox is placeholder until created)
-- **Official Docs**: [AWS SES Authenticating Email with DKIM](https://docs.aws.amazon.com/ses/latest/dg/send-email-authentication-dkim-easy.html)
+## Part 5: External Uptime Monitoring
+1. Set up an external uptime monitor (e.g., Better Stack / UptimeRobot).
+2. Monitor checks:
+   - Web: `https://staging.progresseye.in/` (expect HTTP 200, interval 1m)
+   - API: `https://staging.progresseye.in/api/v1/health/live` (expect HTTP 200, interval 1m)
+- **Official Docs**: [Better Stack Uptime](https://betterstack.com/docs/uptime/)
 
 ---
 
-### Step 2.3: Generate SMTP Credentials
-1. In AWS SES Console, go to **Account dashboard**.
-2. Click **SMTP settings**.
-3. Note Server name: `email-smtp.ap-south-1.amazonaws.com`, Port: `587` (STARTTLS).
-4. Click **Create SMTP credentials**.
-5. IAM User Name: `ses-smtp-progresseye-staging`.
-6. Click **Create**.
-7. Copy **SMTP User Name** and **SMTP Password**.
-8. Paste these into DigitalOcean App Platform environment variables:
-   - `SMTP_USER` = `<generated_iam_smtp_user>`
-   - `SMTP_PASS` = `<generated_iam_smtp_password>`
-- **Official Docs**: [AWS SES Obtaining SMTP Credentials](https://docs.aws.amazon.com/ses/latest/dg/smtp-credentials.html)
+## Part 6: Secret Distribution Matrix
+
+| Secret / Environment Variable | Destination Component | Secret Location / Vault |
+| :--- | :--- | :--- |
+| `DATABASE_URL` (PgBouncer, TLS) | `progresseye-api` | DigitalOcean App Platform Encrypted Env |
+| `DIRECT_URL` (Direct node, TLS) | `progresseye-api` | DigitalOcean App Platform Encrypted Env |
+| `REDIS_PASSWORD` | `progresseye-api` | DigitalOcean App Platform Encrypted Env |
+| `TURNSTILE_SECRET_KEY` | `progresseye-api` | DigitalOcean App Platform Encrypted Env |
+| `SMTP_USER` & `SMTP_PASS` | `progresseye-api` | DigitalOcean App Platform Encrypted Env |
+| `APP_SECRET` / `CORS_ORIGIN` | `progresseye-api` | DigitalOcean App Platform Encrypted Env |
+| `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | `progresseye-web` | App Platform Build & Run Env |
+| `API_INTERNAL_URL` | `progresseye-web` | App Platform Run-time Env (Internal Service) |
 
 ---
 
-### Step 2.4: Move Out of SES Sandbox (When Ready for External Leads)
-1. In SES Console, go to **Account dashboard**.
-2. Click **Request production access**.
-3. Mail type: Transactional.
-4. Website URL: `https://progresseye.in`.
-5. Description: Lead inquiries and administrative transactional notifications for Indian schools.
-6. Submit request (approval typically within 24 hours `[UNVERIFIED]`).
-- **Official Docs**: [AWS SES Moving out of Sandbox](https://docs.aws.amazon.com/ses/latest/dg/request-production-access.html)
+## Part 7: Monthly Cost Summary & Official Documentation URLs
 
----
+### Cost Estimate (Staging Pilot)
+Source: [DigitalOcean Pricing](https://www.digitalocean.com/pricing), [AWS SES Pricing](https://aws.amazon.com/ses/pricing/)
 
-## Part 3: Monthly Cost Summary (Staging Pilot)
-
-| Item | Provider & Tier | Estimated Monthly Cost | Verification Status |
+| Component | Provider & Plan / Specification | Estimated Monthly Cost | Source / Verification URL |
 | :--- | :--- | :--- | :--- |
-| **Web Service** | DigitalOcean App Platform Basic XXS (1 vCPU, 512MB) | ~$5.00 | `[UNVERIFIED - requires live verification]` |
-| **API Service** | DigitalOcean App Platform Basic XXS (1 vCPU, 512MB) | ~$5.00 | `[UNVERIFIED - requires live verification]` |
-| **PostgreSQL 16** | DigitalOcean Managed Database (1 vCPU, 1GB RAM) | ~$15.00 | `[UNVERIFIED - requires live verification]` |
-| **Redis 7** | DigitalOcean Managed Redis (1 vCPU, 1GB RAM) | ~$15.00 | `[UNVERIFIED - requires live verification]` |
-| **Email (SES)** | AWS SES Mumbai ($0.10 / 1,000 emails) | < $1.00 | `[UNVERIFIED - requires live verification]` |
-| **Domain .in** | Registry (.in annual renewal ~$10/yr) | ~$0.83 | `[UNVERIFIED - requires live verification]` |
-| **Total Pilot** | | **~$41.83 / month** | `[UNVERIFIED - requires live verification]` |
+| **Web Service** | DigitalOcean App Platform Basic (1 vCPU, 512MB RAM) | ~$5.00 | [DO App Platform Pricing](https://www.digitalocean.com/pricing/app-platform) `[UNVERIFIED]` |
+| **API Service** | DigitalOcean App Platform Basic (1 vCPU, 512MB RAM) | ~$5.00 | [DO App Platform Pricing](https://www.digitalocean.com/pricing/app-platform) `[UNVERIFIED]` |
+| **PostgreSQL 17** | DigitalOcean Managed PostgreSQL (1 vCPU, 1GB RAM) | ~$15.00 | [DO Managed DB Pricing](https://www.digitalocean.com/pricing/databases) `[UNVERIFIED]` |
+| **Valkey / Redis** | DigitalOcean Managed Valkey/Redis (1 vCPU, 1GB RAM) | ~$15.00 | [DO Managed DB Pricing](https://www.digitalocean.com/pricing/databases) `[UNVERIFIED]` |
+| **Transactional Email** | AWS SES Mumbai (1,000 emails/mo) | < $0.20 | [AWS SES Pricing](https://aws.amazon.com/ses/pricing/) `[UNVERIFIED]` |
+| **Domain Registration** | .in Registry annual amortized | ~$0.83 ($10/yr) | [Registry Pricing](https://registry.in) `[UNVERIFIED]` |
+| **Total Staging Pilot** | | **~$41.03 / month** | `[UNVERIFIED - requires live verification]` |

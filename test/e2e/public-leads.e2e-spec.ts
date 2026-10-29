@@ -189,10 +189,7 @@ describe("Public Leads API E2E Tests", () => {
       expect(response.headers["content-type"]).toContain("application/problem+json");
       expect(response.body).toHaveProperty("code", "SPAM_VERIFICATION_FAILED");
       expect(response.body).toHaveProperty("title", "Bad Request");
-      expect(response.body).toHaveProperty(
-        "type",
-        "https://api.progresseye.in/errors/SPAM_VERIFICATION_FAILED",
-      );
+      expect(response.body).toHaveProperty("type", "/errors/SPAM_VERIFICATION_FAILED");
     });
 
     it("rejects non-JSON Content-Type with 400 Problem Details", async () => {
