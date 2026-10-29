@@ -3,7 +3,7 @@ FROM node:24-alpine AS builder
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
-COPY package.json pnpm-lock.yaml* ./
+COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml* .npmrc* ./
 RUN pnpm install --frozen-lockfile
 
 COPY . .
@@ -18,7 +18,7 @@ ENV NODE_ENV=production
 # Install curl/wget for healthcheck
 RUN apk add --no-cache wget
 
-COPY package.json pnpm-lock.yaml* ./
+COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml* .npmrc* ./
 RUN corepack enable && corepack prepare pnpm@latest --activate
 RUN pnpm install --prod --frozen-lockfile
 
