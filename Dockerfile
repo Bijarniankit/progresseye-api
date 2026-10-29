@@ -18,13 +18,10 @@ ENV NODE_ENV=production
 # Install curl/wget for healthcheck
 RUN apk add --no-cache wget
 
-COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml* .npmrc* ./
-RUN corepack enable && corepack prepare pnpm@latest --activate
-RUN pnpm install --prod --frozen-lockfile
-
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 
 RUN chown -R node:node /app
 
