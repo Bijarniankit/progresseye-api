@@ -57,7 +57,7 @@ describe("ProblemExceptionFilter", () => {
     expect(mockReply.header).toHaveBeenCalledWith("Content-Type", "application/problem+json");
     expect(mockReply.send).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: "https://api.progresseye.in/errors/NOT_FOUND",
+        type: "/errors/NOT_FOUND",
         status: HttpStatus.NOT_FOUND,
         title: "Resource Not Found",
         detail: "Resource was not found",
@@ -75,7 +75,7 @@ describe("ProblemExceptionFilter", () => {
     expect(mockReply.status).toHaveBeenCalledWith(HttpStatus.INTERNAL_SERVER_ERROR);
     expect(mockReply.send).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: "https://api.progresseye.in/errors/INTERNAL_SERVER_ERROR",
+        type: "/errors/INTERNAL_SERVER_ERROR",
         status: HttpStatus.INTERNAL_SERVER_ERROR,
         code: ErrorCode.INTERNAL_SERVER_ERROR,
       }),
@@ -94,7 +94,7 @@ describe("ProblemExceptionFilter", () => {
     expect(mockReply.header).toHaveBeenCalledWith("Content-Type", "application/problem+json");
     expect(mockReply.send).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: "https://api.progresseye.in/errors/SPAM_VERIFICATION_FAILED",
+        type: "/errors/SPAM_VERIFICATION_FAILED",
         status: HttpStatus.BAD_REQUEST,
         title: "Bad Request",
         detail: "Spam verification failed",
