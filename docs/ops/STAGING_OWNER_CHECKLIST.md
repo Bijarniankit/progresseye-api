@@ -62,6 +62,7 @@ Provision providers strictly in this order to satisfy DNS and secret dependencie
    - `DATABASE_URL` (Connection pool mode, PgBouncer port 25060, `sslmode=require`).
    - `DIRECT_URL` (Direct node connection port 25061 for Prisma migrations).
 - **Official Docs**: [DigitalOcean Managed PostgreSQL](https://docs.digitalocean.com/products/databases/postgresql/)
+- **Prisma Migration Documentation**: [Prisma Generating Down Migrations](https://www.prisma.io/docs/orm/prisma-migrate/workflows/generating-down-migrations) (Prisma ORM does not support automated down migrations; schema rollbacks require forward-fix migrations or manual diffing).
 
 ### Step 2.3: Managed Valkey / Redis `[UNVERIFIED - requires live verification]`
 > [!NOTE]
@@ -74,12 +75,23 @@ Provision providers strictly in this order to satisfy DNS and secret dependencie
 6. Record: `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_TLS=true`.
 - **Official Docs**: [DigitalOcean Valkey/Redis](https://docs.digitalocean.com/products/databases/valkey/)
 
-### Step 2.4: App Platform (Web & API)
+### Step 2.4: App Platform (Web & API Architecture & Communication)
 1. Deploy from GitHub repository `Bijarniankit/progresseye-api` and `Bijarniankit/progresseye-web` using `.do/app.yaml`.
 2. Region: `blr1`.
 3. Configure Healthcheck endpoints:
    - API: `/api/v1/health/live` (HTTP 200)
    - Web: `/` (HTTP 200)
+4. **API Endpoints & Routing Architecture**:
+   - The web client calls `/api/v1/public/{contact,demo,newsletter}` (not `/api/v1/leads/public`).
+   - **Internal Network Claim Status**: The claim of a "localhost:4000 private network" is `[UNVERIFIED - requires live verification]`.
+   - **App Spec Separation**: The repositories currently contain separate `.do/app.yaml` files (`name: progresseye-web` and `name: progresseye-api`), representing two separate App Platform applications.
+   - **How Web Reaches API (Architecture Choices)**:
+     - **Option A (One App Spec with Two Components — Recommended)**: Combine Web and API into a single App Platform App specification containing `web` and `api` components. Under this topology, the web service communicates internally via `${api.PRIVATE_URL}` on DigitalOcean's private internal mesh network with zero public egress latency and no cross-origin DNS resolution.
+     - **Option B (Two Separate Apps)**: Maintain Web and API as separate App Platform apps. In this topology, Web reaches the API over the public internet via the API's public URL/domain (`https://api-staging.progresseye.in`), requiring public DNS resolution, egress data transit, and explicit `CORS_ORIGIN` headers.
+   - **Official Documentation**:
+     - [DigitalOcean App Platform Internal Services](https://docs.digitalocean.com/products/app-platform/how-to/manage-apps/#internal-services)
+     - [DigitalOcean App Platform App Spec Reference](https://docs.digitalocean.com/products/app-platform/references/app-spec/)
+   - **Recommendation**: Option A (One App Spec with two components) is recommended for production/staging to avoid unnecessary internet egress latency, reduce public attack surface, and simplify certificate management. (Decision pending repository owner choice before creating cloud accounts; not implemented).
 - **Official Docs**: [DigitalOcean App Platform](https://docs.digitalocean.com/products/app-platform/)
 
 ---

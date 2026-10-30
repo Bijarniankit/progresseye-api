@@ -46,7 +46,7 @@ doctl apps get-deployment <APP_ID> <ROLLBACK_DEPLOYMENT_ID>
 
 > [!IMPORTANT]
 > **Prisma ORM does NOT support `prisma migrate down`**.
-> Official Prisma Documentation: [Prisma Migration Down FAQs](https://www.prisma.io/docs/orm/prisma-migrate/getting-started#does-prisma-migrate-support-rollbacks-or-down-migrations)
+> Official Prisma Documentation: [Prisma Generating Down Migrations](https://www.prisma.io/docs/orm/prisma-migrate/workflows/generating-down-migrations)
 
 When a schema migration causes failure or data corruption, rollback MUST follow one of two strategies:
 
