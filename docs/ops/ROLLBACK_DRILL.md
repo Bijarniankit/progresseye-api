@@ -1,10 +1,22 @@
 # ProgressEye Staging Rollback Drill & Operational Procedure
 
-> **Objective**: Operational rollback procedure on DigitalOcean App Platform and Git repository state. Note: Zero-downtime is not claimed as unproven until tested under continuous production load.
+> **Objective**: Operational rollback procedure for the single-server AWS EC2 Docker Compose topology (Caddy, Next.js Web, NestJS API, BullMQ Worker, Redis) and Amazon RDS PostgreSQL 17.  
+> **Topology Note**: Single-server deployment does not offer High Availability (HA). Zero-downtime is explicitly **not claimed**; container redeployment or restart produces a momentary disruption.
 
 ---
 
-## 1. Rollback Trigger Criteria
+## 1. Single-Server Deployment Risks & Minimum Mitigations
+
+| Risk | Consequence | Minimum Operational Mitigation |
+|---|---|---|
+| **No High Availability (Single Instance)** | If the EC2 instance halts, crashes, or encounters underlying AWS hardware degradation, all services (Web, API, Worker, Redis, Ingress) go offline simultaneously. | 1. **RDS Separation**: Database runs on AWS Managed RDS PostgreSQL 17 independent of EC2 host.<br>2. **Automated EBS Snapshots**: Configured via AWS Data Lifecycle Manager (DLM) daily.<br>3. **External Uptime Monitor**: 60-second polling with immediate SMS/push alerting (Better Stack / UptimeRobot). |
+| **OS Security Patching & Kernel Updates** | Applying Linux OS security updates (e.g. `dnf update` / `apt upgrade`) often necessitates instance reboots. | 1. **Scheduled Maintenance Window**: Execute patching strictly during pre-notified off-hours.<br>2. **Pre-reboot Health Validation**: Verify container health before and after restart.<br>3. **Fast Reboot**: AWS Nitro-based instances (`t3`/`t4g`) reboot in ~30–45 seconds. |
+| **Container Restart on Deployment** | Rebuilding or restarting Docker containers (`docker compose up -d`) momentarily terminates listening sockets before new containers pass health checks. | 1. **Docker `restart: unless-stopped`**: Automatic container recovery on failure.<br>2. **Staged Service Restarts**: Restart worker and API before Web container.<br>3. **Caddy Reverse Proxy Buffer**: Caddy holds incoming connections briefly during upstream port rebind. |
+| **Resource Contention (CPU/RAM)** | Memory spikes in Next.js SSR or BullMQ worker could trigger Linux Out-Of-Memory (OOM) killer on Redis or API. | 1. **Swap File**: Configure 2–4 GB swap space on root EBS volume.<br>2. **Redis Memory Capping**: Redis configured with `--maxmemory 256mb --maxmemory-policy noeviction`.<br>3. **CloudWatch Metrics**: Alarms on EC2 Memory/CPU utilization > 80%. |
+
+---
+
+## 2. Rollback Trigger Criteria
 
 Initiate a rollback immediately if any of the following occur following a deployment:
 - HTTP 5xx error rate exceeds 1% over a 3-minute rolling window.
@@ -14,35 +26,48 @@ Initiate a rollback immediately if any of the following occur following a deploy
 
 ---
 
-## 2. DigitalOcean App Platform Deployment Rollback `[UNVERIFIED - requires live verification]`
+## 3. Docker Compose Application Rollback (Single EC2 Host) `[UNVERIFIED - requires live verification]`
 
-DigitalOcean App Platform retains previous deployment images and permits rollbacks without rebuilding:
+In the single-server topology on AWS EC2, rollbacks are performed directly via Docker Compose on the host instance:
 
-### Option A: Via DigitalOcean Cloud Console `[UNVERIFIED - requires live verification]`
-1. Navigate to [DigitalOcean App Platform Console](https://cloud.digitalocean.com/apps).
-2. Click on the affected app (`progresseye-web` or `progresseye-api`).
-3. Click the **Activity** tab to view deployment history.
-4. Locate the last known good deployment (marked with green checkmark).
-5. Click **Actions** (`...`) next to that deployment and select **Rollback to this deployment**.
-6. Monitor the deployment status until active.
-- **Official Docs**: [DigitalOcean App Platform Rollbacks](https://docs.digitalocean.com/products/app-platform/how-to/manage-deployments/#roll-back-a-deployment)
+### Option A: Rolling Back via Previous Git Commit Tag `[UNVERIFIED - requires live verification]`
+1. Connect to the EC2 instance via AWS Systems Manager (SSM) Session Manager or SSH:
+   ```bash
+   aws ssm start-session --target <EC2_INSTANCE_ID> --region ap-south-1
+   ```
+2. Navigate to the application deployment directory:
+   ```bash
+   cd /opt/progresseye
+   ```
+3. Checkout the last known good commit or release tag:
+   ```bash
+   git fetch origin
+   git checkout <LAST_KNOWN_GOOD_SHA>
+   ```
+4. Rebuild and restart the containers with zero stale artifacts:
+   ```bash
+   docker compose -f docker-compose.staging.yml up -d --build
+   ```
+5. Inspect container health and live startup logs:
+   ```bash
+   docker compose -f docker-compose.staging.yml ps
+   docker compose -f docker-compose.staging.yml logs --tail=100 -f api web
+   ```
+- **Official Docs**: [Docker Compose CLI Reference](https://docs.docker.com/reference/cli/docker/compose/)
 
-### Option B: Via `doctl` CLI `[UNVERIFIED - requires live verification]`
-```bash
-# 1. List recent deployments to find last known good deployment ID
-doctl apps list-deployments <APP_ID>
-
-# 2. Trigger rollback to the previous deployment ID
-doctl apps rollback <APP_ID> --deployment-id <LAST_GOOD_DEPLOYMENT_ID>
-
-# 3. Monitor rollback status
-doctl apps get-deployment <APP_ID> <ROLLBACK_DEPLOYMENT_ID>
-```
-- **Official Docs**: [DigitalOcean CLI doctl Reference](https://docs.digitalocean.com/reference/doctl/reference/apps/rollback/)
+### Option B: Rolling Back via Pinned Docker Image Registry Tags `[UNVERIFIED - requires live verification]`
+If images are pushed to Amazon Elastic Container Registry (ECR):
+1. Update image tags in `.env` or `docker-compose.staging.yml` from `:latest` to the previous specific build tag (e.g. `:sha-<PREVIOUS_SHA>`).
+2. Pull the targeted images and restart services:
+   ```bash
+   docker compose -f docker-compose.staging.yml pull
+   docker compose -f docker-compose.staging.yml up -d
+   ```
+- **Official Docs**: [Amazon ECR Image Tagging](https://docs.aws.amazon.com/AmazonECR/latest/userguide/image-tagging.html)
 
 ---
 
-## 3. Database Schema Rollback Strategy (Prisma ORM 6)
+## 4. Database Schema Rollback Strategy (Prisma ORM 6 & Amazon RDS)
 
 > [!IMPORTANT]
 > **Prisma ORM does NOT support `prisma migrate down`**.
@@ -62,29 +87,41 @@ When a schema migration causes failure or data corruption, rollback MUST follow 
    ```
    Official Docs: [Prisma migrate resolve](https://www.prisma.io/docs/orm/reference/prisma-cli-reference#prisma-migrate-resolve)
 
-### Strategy 2: Point-in-Time Recovery (PITR) or Backup Restore (For destructive data loss)
-1. In the DigitalOcean Managed PostgreSQL Console, navigate to **Backends** > **Backups**.
-2. Select **Restore to a new database cluster** using Point-in-Time Recovery (PITR) to a timestamp immediately preceding the migration.
-3. Update `DATABASE_URL` in the App Platform environment variables to point to the restored cluster.
-4. Official Docs: [DigitalOcean Managed Database Restores](https://docs.digitalocean.com/products/databases/postgresql/how-to/restore/)
+### Strategy 2: Amazon RDS Point-in-Time Recovery (PITR) (For destructive data loss) `[UNVERIFIED - requires live verification]`
+1. In the AWS Management Console, navigate to **Amazon RDS** > **Databases**.
+2. Select the staging database instance (`progresseye-staging-db`).
+3. Click **Actions** > **Restore to point in time**.
+4. Choose **Latest restorable time** or specify a custom timestamp immediately prior to the failed migration.
+5. Enter a new DB instance identifier (e.g., `progresseye-staging-db-restored`).
+6. Configure the restored instance into the same VPC and private database security group (`progresseye-rds-sg`).
+7. Once the restored instance reaches `Available` status, obtain its new endpoint URL.
+8. Update `DATABASE_URL` on the EC2 host in `/opt/progresseye/.env` (and SSM Parameter Store `/progresseye/staging/DATABASE_URL`):
+   ```bash
+   DATABASE_URL="postgresql://<USER>:<PASSWORD>@<NEW_RDS_ENDPOINT>:5432/progresseye_staging?schema=public&sslmode=require"
+   ```
+9. Restart the API and Worker containers:
+   ```bash
+   docker compose -f docker-compose.staging.yml restart api worker
+   ```
+- **Official Docs**: [Restoring an Amazon RDS DB Instance to a Specified Time](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_PIT.html)
 
 ---
 
-## 4. Post-Rollback Verification & Smoke Sweep
+## 5. Post-Rollback Verification & Smoke Sweep
 
-Immediately after triggering rollback, execute the automated route sweep:
+Immediately after triggering rollback, execute the automated route sweep from local machine or CI runner:
 ```bash
-node scripts/staging-smoke.mjs https://staging.progresseye.in
+node scripts/staging-smoke.mjs https://staging.progresseye.com
 ```
 Verify that all routes report `PASS`, security headers are active, and latency is within normal thresholds.
 
 ---
 
-## 5. Git Repository State Synchronization
+## 6. Git Repository State Synchronization
 
-Once staging is restored:
+Once staging is verified operational:
 1. Identify the regression commit on `main`.
-2. Revert the commit cleanly:
+2. Revert the commit cleanly in a dedicated branch:
    ```bash
    git checkout -b revert/incident-fix main
    git revert -m 1 <MERGE_COMMIT_SHA> # If merge commit
@@ -92,4 +129,4 @@ Once staging is restored:
    git revert <COMMIT_SHA> # If standard commit
    git push origin revert/incident-fix
    ```
-3. Open PR, verify CI, and obtain approval before merging.
+3. Open PR, verify CI checks pass, and obtain explicit approval before merging.

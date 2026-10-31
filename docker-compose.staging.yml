@@ -1,0 +1,142 @@
+# ProgressEye Staging — Single-Server AWS EC2 Docker Compose
+# Architecture: Reverse Proxy (Caddy) + Web (Next.js 16) + API (NestJS 11) + Worker (BullMQ) + Redis
+# External Managed Database: Amazon RDS PostgreSQL 17 (ap-south-1)
+# Note: Unused until AWS accounts and infrastructure are provisioned by owner.
+
+services:
+  proxy:
+    image: caddy:2-alpine
+    container_name: progresseye-proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+    networks:
+      - progresseye-net
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_SITE_URL: https://staging.progresseye.com
+        NEXT_PUBLIC_APP_ENV: production
+        NEXT_PUBLIC_HAS_LEAD_BACKEND: "true"
+        NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}
+        NEXT_PUBLIC_SUPPORT_EMAIL: support@progresseye.com
+    image: progresseye-web:staging
+    container_name: progresseye-web
+    restart: unless-stopped
+    expose:
+      - "3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+      NEXT_PUBLIC_SITE_URL: https://staging.progresseye.com
+      NEXT_PUBLIC_APP_ENV: production
+      NEXT_PUBLIC_HAS_LEAD_BACKEND: "true"
+      NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}
+      NEXT_PUBLIC_SUPPORT_EMAIL: support@progresseye.com
+      # Internal Docker network proxy rewrite destination to API container
+      API_INTERNAL_URL: http://api:4000
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - progresseye-net
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  api:
+    build:
+      context: ../progresseye-api
+      dockerfile: Dockerfile
+    image: progresseye-api:staging
+    container_name: progresseye-api
+    restart: unless-stopped
+    expose:
+      - "4000"
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+      HOSTNAME: "0.0.0.0"
+      DATABASE_URL: ${DATABASE_URL}
+      DIRECT_URL: ${DIRECT_URL:-}
+      REDIS_URL: redis://redis:6379
+      # Hop count: 2 if Browser -> Proxy -> Web -> API appends hops; to be confirmed via /api/v1/health/hop-trace
+      TRUSTED_PROXY_COUNT: ${TRUSTED_PROXY_COUNT:-2}
+      CORS_ORIGIN: https://staging.progresseye.com,https://progresseye.com
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
+      SES_REGION: ap-south-1
+      AWS_REGION: ap-south-1
+      MAIL_FROM: ${MAIL_FROM:-noreply@progresseye.com}
+      LEAD_NOTIFICATION_RECIPIENT: ${LEAD_NOTIFICATION_RECIPIENT:-leads@progresseye.com}
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - progresseye-net
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:4000/api/v1/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  worker:
+    build:
+      context: ../progresseye-api
+      dockerfile: Dockerfile.worker
+    image: progresseye-worker:staging
+    container_name: progresseye-worker
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL}
+      DIRECT_URL: ${DIRECT_URL:-}
+      REDIS_URL: redis://redis:6379
+      SES_REGION: ap-south-1
+      AWS_REGION: ap-south-1
+      MAIL_FROM: ${MAIL_FROM:-noreply@progresseye.com}
+      LEAD_NOTIFICATION_RECIPIENT: ${LEAD_NOTIFICATION_RECIPIENT:-leads@progresseye.com}
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - progresseye-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: progresseye-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - progresseye-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+networks:
+  progresseye-net:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:
+  redis_data:

@@ -14,6 +14,8 @@ FROM node:24-alpine AS runner
 
 WORKDIR /app
 ENV NODE_ENV=production
+ENV HOSTNAME="0.0.0.0"
+ENV PORT=4000
 
 # Install curl/wget for healthcheck
 RUN apk add --no-cache wget
