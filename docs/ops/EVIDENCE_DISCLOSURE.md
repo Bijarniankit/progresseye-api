@@ -6,7 +6,7 @@ This document records corrections, formal disclosures, and validation records fo
 
 ## 1. Layout Shift (0.110) Root Cause & Empirical Validation
 - **Prior Hypothesis Withdrawn**: Previous notes hypothesized that the GitHub runner (`ubuntu-latest`) lacked Arial and that font substitution to DejaVu Sans caused the 0.110 layout shift on mobile `/`. That mechanism is retracted: `fc-match Arial` on the runner returned Liberation Sans (not DejaVu), rendering the exact substitution reflow mechanism unproven.
-- **Finding**: **Cause unproven; fix validated empirically (runner CLS 0 over 15 + 25 runs)**.
+- **Finding**: **Cause unproven; fix validated empirically (median 0, max 0.003 (one /contact run))**.
 - **Validation**: On the PR branch, 15 mobile runs across viewports 320px, 360px, and 412px, plus the 25-run mobile Lighthouse suite, confirmed CLS 0.000 across all runs with `font-display: optional` and hero tour min-height.
 
 ---

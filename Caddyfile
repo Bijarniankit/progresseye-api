@@ -1,0 +1,28 @@
+{
+    # ACME certificate notification email for Let's Encrypt / ZeroSSL
+    email admin@progresseye.com
+}
+
+# Staging Environment Ingress
+staging.progresseye.com {
+    encode gzip zstd
+
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+
+    # Reverse proxy to web container (Next.js 16 standalone server)
+    # Next.js serves marketing pages and rewrites /api/* to http://api:4000/api/*
+    reverse_proxy web:3000 {
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host {host}
+    }
+}
