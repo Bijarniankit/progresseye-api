@@ -1,15 +1,15 @@
 {
     # ACME certificate notification email for Let's Encrypt / ZeroSSL
-    email admin@progresseye.com
+    # TODO-REAL-DATA: Replace with valid operator email before production certificate issuance
+    email TODO-REAL-DATA-ACME-EMAIL
 }
 
 # Staging Environment Ingress
 staging.progresseye.com {
     encode gzip zstd
 
-    # Security headers
+    # Security headers (HSTS is omitted here; configured dynamically in application layer with ramp)
     header {
-        Strict-Transport-Security "max-age=31536000; includeSubDomains"
         X-Content-Type-Options "nosniff"
         X-Frame-Options "DENY"
         Referrer-Policy "strict-origin-when-cross-origin"
