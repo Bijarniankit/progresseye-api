@@ -8,7 +8,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
   constructor(
     @Optional() private readonly tenantContext?: TenantContextService,
-    options?: ConstructorParameters<typeof PrismaClient>[0],
+    @Optional() options?: ConstructorParameters<typeof PrismaClient>[0],
   ) {
     super(options);
   }
