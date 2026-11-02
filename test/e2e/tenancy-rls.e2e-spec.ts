@@ -429,6 +429,8 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
           "started_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
           "applied_steps_count" INTEGER NOT NULL DEFAULT 0
         );
+      `);
+      await mainPrisma.$executeRawUnsafe(`
         INSERT INTO "_prisma_migrations" (id, checksum, finished_at, migration_name, applied_steps_count)
         VALUES 
           ('1', 'checksum1', now(), '20261012000000_enable_postgresql_extensions', 1),
