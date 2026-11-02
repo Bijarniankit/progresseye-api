@@ -99,7 +99,7 @@ jobs:
           SMTP_PORT: 1025
           MAIL_FROM: noreply@progresseye.com
           LEAD_NOTIFICATION_RECIPIENT: leads@progresseye.com
-        run: pnpm test:e2e -- --verbose
+        run: pnpm test:e2e
 
       - name: Run Build
         run: pnpm build
