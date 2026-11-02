@@ -32,15 +32,17 @@ Tables in ProgressEye are classified into five distinct operational tiers:
 ### 2. Operating without `BYPASSRLS` on Application Role
 The application database user `progresseye_app` is provisioned strictly with `NOBYPASSRLS`. To satisfy operational flows without bypassing RLS:
 
-1. **School Resolution by Slug**:
-   When an incoming HTTP request arrives with a tenant slug (or subdomain), the application resolves the tenant by slug using a public read policy on `schools` (`SELECT id, slug, name, is_active FROM schools`). No sensitive tenant data is exposed.
+1. **School Resolution by Slug & Public Read Policy**:
+   **Accepted**: The `schools` table serves as the tenant directory. The public read policy (`SELECT id, slug, name, is_active FROM schools`) is accepted because incoming requests must resolve tenant identifiers from the host header or slug before a tenant session exists. No sensitive operational or educational data is stored on `schools`; all sensitive tenant entities (users, academic years, roles, audit logs) reside in tenant-scoped tables strictly protected by RLS. Mutations (`INSERT`, `UPDATE`, `DELETE`) on `schools` are restricted.
 2. **Login Lookup before Tenant is Known**:
    In Phase 11, `users` is strictly tenant-scoped with `school_id NOT NULL`. If the user submits their school slug alongside their login credentials, the tenant context is set immediately before looking up the user.
-   *Open Decision for Phase 12 (D-042)*: If multi-school single-sign-on or global email lookup (without prior tenant slug) is introduced in Phase 12, it will be implemented via an explicit, audited `SECURITY DEFINER` function owned by `progresseye_owner` that returns the matching `school_id` and hashed credentials without granting `BYPASSRLS` to `progresseye_app`. The Phase 11 schema explicitly accommodates this without modification.
+   *Open Decision for Phase 12 (D-042)*: If multi-school single-sign-on or global email lookup (without prior tenant slug) is introduced in Phase 12, it will be implemented via an explicit, audited `SECURITY DEFINER` function owned by `progresseye_owner`. To prevent search-path hijacking attacks, the function will be hardened with `SET search_path = public, pg_temp;`. It returns the matching `school_id` and hashed credentials without granting `BYPASSRLS` to `progresseye_app`. The Phase 11 schema explicitly accommodates this without modification.
 3. **Platform-Admin & Support Access**:
    Platform administrators and support staff do NOT bypass RLS globally. When diagnosing a tenant issue, the administrative session explicitly sets `app.current_school_id` to the target tenant, creating an immutable `audit_logs` entry documenting support impersonation.
 4. **Organization-Level Access**:
    Multi-school entities (e.g. trusts/districts) query member schools by iterating across member `school_id` values in separate tenant-scoped transactions, or through a dedicated organization-level policy in Phase 13.
+5. **Platform-Level Audit Trail**:
+   Because `audit_logs.school_id` is `NOT NULL` to guarantee fail-closed tenant boundary enforcement and prevent null-bypass vulnerabilities in RLS, platform-level audit events (e.g. platform admin global actions, marketing lead submissions, tenant provisioning) cannot be placed in the tenant `audit_logs` table. Platform-level events are routed to a separate platform audit sink (`platform_audit_logs` / structured system logs) which is platform-owned and outside tenant RLS.
 
 ### 3. Tenant Context Injection & Nil-UUID Fail-Closed Mechanism
 - Tenant context is set per transaction via PostgreSQL's built-in session parameter function:

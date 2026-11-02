@@ -8,22 +8,26 @@ DO $$
 BEGIN
     -- Application role: runs the API server, strictly NOBYPASSRLS
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'progresseye_app') THEN
-        CREATE ROLE progresseye_app WITH LOGIN NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE;
+        CREATE ROLE progresseye_app WITH LOGIN PASSWORD 'apppassword' NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE;
     ELSE
-        ALTER ROLE progresseye_app WITH NOBYPASSRLS;
+        ALTER ROLE progresseye_app WITH LOGIN PASSWORD 'apppassword' NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE;
     END IF;
 
     -- Read-only role: for MCP inspection, telemetry, and analytics, strictly NOBYPASSRLS
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'progresseye_ro') THEN
-        CREATE ROLE progresseye_ro WITH LOGIN NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE;
+        CREATE ROLE progresseye_ro WITH LOGIN PASSWORD 'ropassword' NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE;
     ELSE
-        ALTER ROLE progresseye_ro WITH NOBYPASSRLS;
+        ALTER ROLE progresseye_ro WITH LOGIN PASSWORD 'ropassword' NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE;
     END IF;
 
-    -- Owner role: runs migrations, maintains DDL schema
+    -- Owner role: runs migrations, maintains DDL schema, strictly NOBYPASSRLS
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'progresseye_owner') THEN
-        CREATE ROLE progresseye_owner WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE;
+        CREATE ROLE progresseye_owner WITH LOGIN PASSWORD 'ownerpassword' NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE;
+    ELSE
+        ALTER ROLE progresseye_owner WITH LOGIN PASSWORD 'ownerpassword' NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE;
     END IF;
+
+    EXECUTE format('GRANT CONNECT ON DATABASE %I TO progresseye_owner, progresseye_app, progresseye_ro', current_database());
 END $$;
 
 -- -------------------------------------------------------------
@@ -254,6 +258,8 @@ CREATE TABLE IF NOT EXISTS "audit_logs_y2026m12" PARTITION OF "audit_logs"
 CREATE TABLE IF NOT EXISTS "audit_logs_y2027m01" PARTITION OF "audit_logs"
     FOR VALUES FROM ('2027-01-01 00:00:00') TO ('2027-02-01 00:00:00');
 
+CREATE TABLE IF NOT EXISTS "audit_logs_default" PARTITION OF "audit_logs" DEFAULT;
+
 -- -------------------------------------------------------------
 -- 12. Outbox Events (Tenant Scoped)
 -- -------------------------------------------------------------
@@ -425,6 +431,14 @@ CREATE POLICY "audit_logs_y2027m01_tenant_isolation" ON "audit_logs_y2027m01"
     USING (school_id = COALESCE(NULLIF(current_setting('app.current_school_id', true), ''), '00000000-0000-0000-0000-000000000000')::uuid)
     WITH CHECK (school_id = COALESCE(NULLIF(current_setting('app.current_school_id', true), ''), '00000000-0000-0000-0000-000000000000')::uuid);
 
+ALTER TABLE "audit_logs_default" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "audit_logs_default" FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "audit_logs_default_tenant_isolation" ON "audit_logs_default";
+CREATE POLICY "audit_logs_default_tenant_isolation" ON "audit_logs_default"
+    FOR ALL
+    USING (school_id = COALESCE(NULLIF(current_setting('app.current_school_id', true), ''), '00000000-0000-0000-0000-000000000000')::uuid)
+    WITH CHECK (school_id = COALESCE(NULLIF(current_setting('app.current_school_id', true), ''), '00000000-0000-0000-0000-000000000000')::uuid);
+
 -- I. Outbox Events
 ALTER TABLE "outbox_events" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "outbox_events" FORCE ROW LEVEL SECURITY;
@@ -467,6 +481,7 @@ ALTER TABLE "audit_logs_y2026m10" OWNER TO progresseye_owner;
 ALTER TABLE "audit_logs_y2026m11" OWNER TO progresseye_owner;
 ALTER TABLE "audit_logs_y2026m12" OWNER TO progresseye_owner;
 ALTER TABLE "audit_logs_y2027m01" OWNER TO progresseye_owner;
+ALTER TABLE "audit_logs_default" OWNER TO progresseye_owner;
 ALTER TABLE "outbox_events" OWNER TO progresseye_owner;
 ALTER TABLE "counters" OWNER TO progresseye_owner;
 ALTER TABLE "public_leads" OWNER TO progresseye_owner;
@@ -511,6 +526,9 @@ REVOKE UPDATE, DELETE ON "audit_logs_y2026m12" FROM progresseye_app;
 
 GRANT SELECT, INSERT ON "audit_logs_y2027m01" TO progresseye_app;
 REVOKE UPDATE, DELETE ON "audit_logs_y2027m01" FROM progresseye_app;
+
+GRANT SELECT, INSERT ON "audit_logs_default" TO progresseye_app;
+REVOKE UPDATE, DELETE ON "audit_logs_default" FROM progresseye_app;
 
 -- Read-only role: SELECT on all tables
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO progresseye_ro;

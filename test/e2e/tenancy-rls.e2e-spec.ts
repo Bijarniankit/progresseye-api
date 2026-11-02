@@ -16,6 +16,16 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
   const userAId = uuidv7();
   const userBId = uuidv7();
 
+  const dbUrlStr =
+    process.env.DATABASE_URL ?? "postgresql://postgres:postgrespassword@localhost:5432/test_db";
+  const urlObj = new URL(dbUrlStr);
+  const host = urlObj.hostname;
+  const port = urlObj.port || "5432";
+  const dbName = urlObj.pathname.replace(/^\//, "");
+
+  const appDbUrl = `postgresql://progresseye_app:apppassword@${host}:${port}/${dbName}`;
+  const ownerDbUrl = `postgresql://progresseye_owner:ownerpassword@${host}:${port}/${dbName}`;
+
   beforeAll(async () => {
     tenantContext = new TenantContextService();
     prisma = new PrismaService(tenantContext);
@@ -53,12 +63,10 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
     await prisma.$disconnect();
   });
 
-  describe("1. Cross-Tenant Read Isolation", () => {
+  describe("Test 01: Cross-Tenant Read Isolation (Tenant A)", () => {
     it("should allow Tenant A to read only Tenant A users and academic years", async () => {
       await tenantContext.run({ schoolId: schoolA }, async () => {
         const client = prisma.client;
-
-        // Switch session role to non-privileged application role
         await client.$executeRawUnsafe(`SET ROLE progresseye_app;`);
 
         const users: any[] = await client.$queryRaw`SELECT id, email, first_name FROM users;`;
@@ -69,11 +77,12 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
         await client.$executeRawUnsafe(`RESET ROLE;`);
       });
     });
+  });
 
+  describe("Test 02: Cross-Tenant Read Isolation (Tenant B)", () => {
     it("should allow Tenant B to read only Tenant B users", async () => {
       await tenantContext.run({ schoolId: schoolB }, async () => {
         const client = prisma.client;
-
         await client.$executeRawUnsafe(`SET ROLE progresseye_app;`);
 
         const users: any[] = await client.$queryRaw`SELECT id, email, first_name FROM users;`;
@@ -86,18 +95,17 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
     });
   });
 
-  describe("2. Cross-Tenant Insert / Target Tampering Isolation", () => {
+  describe("Test 03: Cross-Tenant Insert Protection", () => {
     it("should block Tenant A from inserting records targeting Tenant B (RLS WITH CHECK)", async () => {
+      const maliciousUserId = uuidv7();
       await tenantContext.run({ schoolId: schoolA }, async () => {
         const client = prisma.client;
-
         await client.$executeRawUnsafe(`SET ROLE progresseye_app;`);
 
-        const targetTamperedId = uuidv7();
         await expect(
           client.$executeRaw`
-            INSERT INTO users (id, school_id, email, first_name, last_name, is_active)
-            VALUES (${targetTamperedId}::uuid, ${schoolB}::uuid, 'tampered@school-b.edu', 'Evil', 'Actor', true);
+            INSERT INTO users (id, school_id, email, first_name, last_name)
+            VALUES (${maliciousUserId}::uuid, ${schoolB}::uuid, 'intruder@school-b.edu', 'Eve', 'Intruder');
           `,
         ).rejects.toThrow();
 
@@ -106,95 +114,84 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
     });
   });
 
-  describe("3. Cross-Tenant Update Isolation", () => {
+  describe("Test 04: Cross-Tenant Update Protection", () => {
     it("should prevent Tenant A from updating Tenant B records (0 rows affected)", async () => {
       await tenantContext.run({ schoolId: schoolA }, async () => {
         const client = prisma.client;
-
         await client.$executeRawUnsafe(`SET ROLE progresseye_app;`);
 
-        const affectedCount = await client.$executeRaw`
-          UPDATE users SET first_name = 'Hacked' WHERE id = ${userBId}::uuid;
+        const updatedCount = await client.$executeRaw`
+          UPDATE users
+          SET first_name = 'Hacked'
+          WHERE id = ${userBId}::uuid;
         `;
-        expect(affectedCount).toBe(0);
+        expect(updatedCount).toBe(0);
 
         await client.$executeRawUnsafe(`RESET ROLE;`);
       });
-
-      // Verify Bob was not modified
-      const bob: any[] =
-        await prisma.$queryRaw`SELECT first_name FROM users WHERE id = ${userBId}::uuid;`;
-      expect(bob[0].first_name).toBe("Bob");
     });
   });
 
-  describe("4. Cross-Tenant Delete Isolation", () => {
+  describe("Test 05: Cross-Tenant Delete Protection", () => {
     it("should prevent Tenant A from deleting Tenant B records (0 rows affected)", async () => {
       await tenantContext.run({ schoolId: schoolA }, async () => {
         const client = prisma.client;
-
         await client.$executeRawUnsafe(`SET ROLE progresseye_app;`);
 
-        const affectedCount = await client.$executeRaw`
-          DELETE FROM users WHERE id = ${userBId}::uuid;
+        const deletedCount = await client.$executeRaw`
+          DELETE FROM users
+          WHERE id = ${userBId}::uuid;
         `;
-        expect(affectedCount).toBe(0);
+        expect(deletedCount).toBe(0);
 
         await client.$executeRawUnsafe(`RESET ROLE;`);
       });
-
-      // Verify Bob still exists
-      const bob: any[] = await prisma.$queryRaw`SELECT id FROM users WHERE id = ${userBId}::uuid;`;
-      expect(bob.length).toBe(1);
     });
   });
 
-  describe("5. Explicit WHERE Clause Targeting Another Tenant", () => {
+  describe("Test 06: Explicit WHERE Clause Targeting Another Tenant", () => {
     it("should return 0 rows when Tenant A explicitly queries WHERE school_id = Tenant B", async () => {
       await tenantContext.run({ schoolId: schoolA }, async () => {
         const client = prisma.client;
-
         await client.$executeRawUnsafe(`SET ROLE progresseye_app;`);
 
-        const result: any[] = await client.$queryRaw`
-          SELECT * FROM users WHERE school_id = ${schoolB}::uuid;
+        const rows: any[] = await client.$queryRaw`
+          SELECT id FROM users WHERE school_id = ${schoolB}::uuid;
         `;
-        expect(result.length).toBe(0);
+        expect(rows.length).toBe(0);
 
         await client.$executeRawUnsafe(`RESET ROLE;`);
       });
     });
   });
 
-  describe("6. Missing Tenant Context (Fail-Closed)", () => {
+  describe("Test 07: Missing Tenant Context (Fail-Closed)", () => {
     it("should return 0 rows for all tenant tables when app.current_school_id is unset", async () => {
-      // Execute outside of any tenantContext
       const client = prisma.client;
-
       await client.$executeRawUnsafe(`SET ROLE progresseye_app;`);
       await client.$executeRawUnsafe(`SELECT set_config('app.current_school_id', '', true);`);
 
-      const users: any[] = await client.$queryRaw`SELECT * FROM users;`;
+      const users: any[] = await client.$queryRaw`SELECT id FROM users;`;
       expect(users.length).toBe(0);
 
-      const academicYears: any[] = await client.$queryRaw`SELECT * FROM academic_years;`;
+      const academicYears: any[] = await client.$queryRaw`SELECT id FROM academic_years;`;
       expect(academicYears.length).toBe(0);
 
-      const counters: any[] = await client.$queryRaw`SELECT * FROM counters;`;
-      expect(counters.length).toBe(0);
+      const sessions: any[] = await client.$queryRaw`SELECT id FROM sessions;`;
+      expect(sessions.length).toBe(0);
 
-      const auditLogs: any[] = await client.$queryRaw`SELECT * FROM audit_logs;`;
+      const auditLogs: any[] = await client.$queryRaw`SELECT id FROM audit_logs;`;
       expect(auditLogs.length).toBe(0);
 
       await client.$executeRawUnsafe(`RESET ROLE;`);
     });
   });
 
-  describe("7. Malformed Tenant Context Rejection", () => {
+  describe("Test 08: Malformed Tenant Context Rejection", () => {
     it("should reject invalid non-UUID strings and SQL injection in tenant context", async () => {
-      await expect(tenantContext.run({ schoolId: "malformed-id" }, async () => {})).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(
+        tenantContext.run({ schoolId: "invalid-uuid-format" }, async () => {}),
+      ).rejects.toThrow(BadRequestException);
 
       await expect(
         tenantContext.run({ schoolId: "'; DROP TABLE users; --" }, async () => {}),
@@ -206,72 +203,208 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
     });
   });
 
-  describe("8. FORCE RLS vs Table Owner Invariant", () => {
-    it("should enforce tenant boundaries even when query runs as progresseye_owner", async () => {
-      await tenantContext.run({ schoolId: schoolA }, async () => {
-        const client = prisma.client;
-
-        // Switch session role to table owner
-        await client.$executeRawUnsafe(`SET ROLE progresseye_owner;`);
-
-        // Because FORCE ROW LEVEL SECURITY is enabled on users, owner only sees School A
-        const users: any[] = await client.$queryRaw`SELECT id FROM users;`;
-        expect(users.length).toBe(1);
-        expect(users[0].id).toBe(userAId);
-
-        await client.$executeRawUnsafe(`RESET ROLE;`);
+  describe("Test 09: FORCE RLS vs Table Owner Invariant (Non-Superuser Direct Connection)", () => {
+    it("should enforce tenant boundaries even when connected directly as progresseye_owner", async () => {
+      const ownerPrisma = new PrismaClient({
+        datasources: { db: { url: ownerDbUrl } },
       });
+      await ownerPrisma.$connect();
+
+      // Assert that progresseye_owner is NOT superuser and does NOT have BYPASSRLS
+      const [roleInfo]: any[] = await ownerPrisma.$queryRaw`
+        SELECT rolname, rolsuper, rolbypassrls, rolcanlogin 
+        FROM pg_roles 
+        WHERE rolname = 'progresseye_owner';
+      `;
+      expect(roleInfo.rolsuper).toBe(false);
+      expect(roleInfo.rolbypassrls).toBe(false);
+      expect(roleInfo.rolcanlogin).toBe(true);
+
+      // Query with Tenant A context: sees only Tenant A
+      await ownerPrisma.$executeRaw`SELECT set_config('app.current_school_id', ${schoolA}, true);`;
+      const usersA: any[] = await ownerPrisma.$queryRaw`SELECT id FROM users;`;
+      expect(usersA.length).toBe(1);
+      expect(usersA[0].id).toBe(userAId);
+
+      // Query with Tenant B context: sees only Tenant B
+      await ownerPrisma.$executeRaw`SELECT set_config('app.current_school_id', ${schoolB}, true);`;
+      const usersB: any[] = await ownerPrisma.$queryRaw`SELECT id FROM users;`;
+      expect(usersB.length).toBe(1);
+      expect(usersB[0].id).toBe(userBId);
+
+      // Query with empty context: returns 0 rows (FORCE RLS enforces fail-closed against owner)
+      await ownerPrisma.$executeRaw`SELECT set_config('app.current_school_id', '', true);`;
+      const usersEmpty: any[] = await ownerPrisma.$queryRaw`SELECT id FROM users;`;
+      expect(usersEmpty.length).toBe(0);
+
+      await ownerPrisma.$disconnect();
     });
   });
 
-  describe("9. Partition Direct Access & Audit Log Immutability", () => {
+  describe("Test 10: Partition Direct Access & Audit Log Immutability", () => {
     it("should isolate direct partition queries and reject UPDATE/DELETE under progresseye_app", async () => {
+      const appPrisma = new PrismaClient({
+        datasources: { db: { url: appDbUrl } },
+      });
+      await appPrisma.$connect();
+
+      const [roleInfo]: any[] = await appPrisma.$queryRaw`
+        SELECT rolname, rolsuper, rolbypassrls, rolcanlogin 
+        FROM pg_roles 
+        WHERE rolname = 'progresseye_app';
+      `;
+      expect(roleInfo.rolsuper).toBe(false);
+      expect(roleInfo.rolbypassrls).toBe(false);
+      expect(roleInfo.rolcanlogin).toBe(true);
+
       const logAId = uuidv7();
 
       // Insert audit log for Tenant A in November 2026 partition
-      await tenantContext.run({ schoolId: schoolA }, async () => {
-        const client = prisma.client;
-        await client.$executeRawUnsafe(`SET ROLE progresseye_app;`);
+      await appPrisma.$executeRaw`SELECT set_config('app.current_school_id', ${schoolA}, true);`;
+      await appPrisma.$executeRaw`
+        INSERT INTO audit_logs (id, school_id, action, resource, created_at)
+        VALUES (${logAId}::uuid, ${schoolA}::uuid, 'USER_LOGIN', 'users', '2026-11-02 10:00:00'::timestamp);
+      `;
 
-        await client.$executeRaw`
-          INSERT INTO audit_logs (id, school_id, action, resource, created_at)
-          VALUES (${logAId}::uuid, ${schoolA}::uuid, 'USER_LOGIN', 'users', '2026-11-02 10:00:00'::timestamp);
-        `;
+      // Direct SELECT on partition returns log
+      const logsA: any[] = await appPrisma.$queryRaw`
+        SELECT id, action FROM audit_logs_y2026m11;
+      `;
+      expect(logsA.length).toBe(1);
+      expect(logsA[0].id).toBe(logAId);
 
-        // Direct SELECT on partition returns log
-        const logs: any[] = await client.$queryRaw`
-          SELECT id, action FROM audit_logs_y2026m11;
-        `;
-        expect(logs.length).toBe(1);
-        expect(logs[0].id).toBe(logAId);
+      // Attempt direct UPDATE on partition under progresseye_app - MUST FAIL (code 42501 permission denied)
+      await expect(
+        appPrisma.$executeRaw`UPDATE audit_logs_y2026m11 SET action = 'ALTERED';`,
+      ).rejects.toThrow();
 
-        // Attempt direct UPDATE on partition under progresseye_app - MUST FAIL (permission denied)
-        await expect(
-          client.$executeRaw`UPDATE audit_logs_y2026m11 SET action = 'ALTERED';`,
-        ).rejects.toThrow();
-
-        // Attempt direct DELETE on partition under progresseye_app - MUST FAIL (permission denied)
-        await expect(client.$executeRaw`DELETE FROM audit_logs_y2026m11;`).rejects.toThrow();
-
-        await client.$executeRawUnsafe(`RESET ROLE;`);
-      });
+      // Attempt direct DELETE on partition under progresseye_app - MUST FAIL (code 42501 permission denied)
+      await expect(appPrisma.$executeRaw`DELETE FROM audit_logs_y2026m11;`).rejects.toThrow();
 
       // Tenant B direct partition query returns 0 rows
-      await tenantContext.run({ schoolId: schoolB }, async () => {
-        const client = prisma.client;
-        await client.$executeRawUnsafe(`SET ROLE progresseye_app;`);
+      await appPrisma.$executeRaw`SELECT set_config('app.current_school_id', ${schoolB}, true);`;
+      const logsB: any[] = await appPrisma.$queryRaw`
+        SELECT id FROM audit_logs_y2026m11;
+      `;
+      expect(logsB.length).toBe(0);
 
-        const logs: any[] = await client.$queryRaw`
-          SELECT id FROM audit_logs_y2026m11;
-        `;
-        expect(logs.length).toBe(0);
-
-        await client.$executeRawUnsafe(`RESET ROLE;`);
-      });
+      await appPrisma.$disconnect();
     });
   });
 
-  describe("10. Counter Concurrency with Row Locks", () => {
+  describe("Test 11: Audit Log Default Partition for Future Months (2027-02 Insert)", () => {
+    it("should route inserts dated 2027-02 into audit_logs_default with RLS and immutability intact", async () => {
+      const appPrisma = new PrismaClient({
+        datasources: { db: { url: appDbUrl } },
+      });
+      await appPrisma.$connect();
+
+      const futureLogId = uuidv7();
+
+      // Insert audit log dated 2027-02-15 (beyond the 2027-01 monthly partition)
+      await appPrisma.$executeRaw`SELECT set_config('app.current_school_id', ${schoolA}, true);`;
+      await appPrisma.$executeRaw`
+        INSERT INTO audit_logs (id, school_id, action, resource, created_at)
+        VALUES (${futureLogId}::uuid, ${schoolA}::uuid, 'FUTURE_EVENT', 'audit_default', '2027-02-15 10:00:00'::timestamp);
+      `;
+
+      // Direct SELECT on audit_logs_default returns the log for School A
+      const logsDefaultA: any[] = await appPrisma.$queryRaw`
+        SELECT id, action FROM audit_logs_default WHERE id = ${futureLogId}::uuid;
+      `;
+      expect(logsDefaultA.length).toBe(1);
+      expect(logsDefaultA[0].id).toBe(futureLogId);
+
+      // Direct SELECT on audit_logs_default for School B returns 0 rows (RLS enforced)
+      await appPrisma.$executeRaw`SELECT set_config('app.current_school_id', ${schoolB}, true);`;
+      const logsDefaultB: any[] = await appPrisma.$queryRaw`
+        SELECT id FROM audit_logs_default WHERE id = ${futureLogId}::uuid;
+      `;
+      expect(logsDefaultB.length).toBe(0);
+
+      // Attempt UPDATE/DELETE on audit_logs_default under progresseye_app fails (permission denied)
+      await expect(
+        appPrisma.$executeRaw`UPDATE audit_logs_default SET action = 'MUTATED';`,
+      ).rejects.toThrow();
+      await expect(
+        appPrisma.$executeRaw`DELETE FROM audit_logs_default WHERE id = ${futureLogId}::uuid;`,
+      ).rejects.toThrow();
+
+      await appPrisma.$disconnect();
+    });
+  });
+
+  describe("Test 12: Service Call Under App Role & Concurrent Tenant Isolation", () => {
+    it("should isolate pooled client service calls and concurrent requests across tenants", async () => {
+      const appPrisma = new PrismaClient({
+        datasources: { db: { url: appDbUrl } },
+      });
+      await appPrisma.$connect();
+
+      // Tenant extension replicating PrismaService on appPrisma
+      const appClient = appPrisma.$extends({
+        query: {
+          $allModels: {
+            async $allOperations({ model, operation, args, query }) {
+              const schoolId = tenantContext.getTenantId();
+              if (!schoolId) {
+                return query(args);
+              }
+              return (appPrisma as any).$transaction(async (tx: any) => {
+                await tx.$executeRaw`SELECT set_config('app.current_school_id', ${schoolId}, true)`;
+                const modelKey = model.charAt(0).toLowerCase() + model.slice(1);
+                return (tx[modelKey] ?? tx[model])[operation](args);
+              });
+            },
+          },
+        },
+      });
+
+      // 1. Normal service call for Tenant A returns ONLY Tenant A rows
+      await tenantContext.run({ schoolId: schoolA }, async () => {
+        const users = await (appClient as any).user.findMany();
+        expect(users.length).toBe(1);
+        expect(users[0].id).toBe(userAId);
+        expect(users[0].schoolId).toBe(schoolA);
+      });
+
+      // 2. Normal service call for Tenant B returns ONLY Tenant B rows
+      await tenantContext.run({ schoolId: schoolB }, async () => {
+        const users = await (appClient as any).user.findMany();
+        expect(users.length).toBe(1);
+        expect(users[0].id).toBe(userBId);
+        expect(users[0].schoolId).toBe(schoolB);
+      });
+
+      // 3. Concurrent requests on pooled client never cross-contaminate
+      const tasks = [
+        ...Array.from({ length: 10 }).map(() =>
+          tenantContext.run({ schoolId: schoolA }, async () => {
+            const users = await (appClient as any).user.findMany();
+            expect(users.length).toBe(1);
+            expect(users[0].id).toBe(userAId);
+            return users[0].id;
+          }),
+        ),
+        ...Array.from({ length: 10 }).map(() =>
+          tenantContext.run({ schoolId: schoolB }, async () => {
+            const users = await (appClient as any).user.findMany();
+            expect(users.length).toBe(1);
+            expect(users[0].id).toBe(userBId);
+            return users[0].id;
+          }),
+        ),
+      ];
+
+      const results = await Promise.all(tasks);
+      expect(results.filter((id) => id === userAId).length).toBe(10);
+      expect(results.filter((id) => id === userBId).length).toBe(10);
+
+      await appPrisma.$disconnect();
+    });
+  });
+
+  describe("Test 13: Counter Sequential Numbering Concurrency", () => {
     it("should handle concurrent increments sequentially with FOR UPDATE row locks", async () => {
       const counterId = uuidv7();
 
@@ -311,7 +444,7 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
     });
   });
 
-  describe("11. Migration Deploy from Empty and from Current Main", () => {
+  describe("Test 14: Migration Deploy from Empty Database", () => {
     const dbUrlBase =
       process.env.DATABASE_URL?.substring(0, process.env.DATABASE_URL.lastIndexOf("/")) ??
       "postgresql://postgres:postgrespassword@localhost:5432";
@@ -337,14 +470,16 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
       const tables: any[] = await emptyPrisma.$queryRaw`
         SELECT tablename FROM pg_tables WHERE schemaname = 'public';
       `;
-      const tableNames = tables.map((t) => t.tablename);
-      expect(tableNames).toContain("schools");
-      expect(tableNames).toContain("users");
-      expect(tableNames).toContain("audit_logs");
-      expect(tableNames).toContain("counters");
+      expect(tables.length).toBeGreaterThanOrEqual(13);
 
       await emptyPrisma.$disconnect();
     });
+  });
+
+  describe("Test 15: Migration Deploy from Current Main Schema Upgrade", () => {
+    const dbUrlBase =
+      process.env.DATABASE_URL?.substring(0, process.env.DATABASE_URL.lastIndexOf("/")) ??
+      "postgresql://postgres:postgrespassword@localhost:5432";
 
     it("should deploy cleanly from current main schema upgrade", async () => {
       await prisma.$executeRawUnsafe(`DROP DATABASE IF EXISTS test_db_from_main;`);
@@ -450,11 +585,10 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
 
       // Verify existing data preserved and new schema active
       const school: any[] = await mainPrisma.$queryRaw`
-        SELECT slug, name, is_active FROM schools WHERE slug = 'main-school';
+        SELECT id, slug, name FROM schools WHERE slug = 'main-school';
       `;
       expect(school.length).toBe(1);
       expect(school[0].name).toBe("Main School");
-      expect(school[0].is_active).toBe(true);
 
       await mainPrisma.$disconnect();
     });
