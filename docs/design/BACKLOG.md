@@ -37,3 +37,11 @@ Deferred maintenance chores and dependency upgrades scheduled for execution at t
 ### 5. Newsletter Double Opt-In Workflow
 - **Checklist Item**: Implement double opt-in confirmation email token dispatch and verification endpoint for newsletter subscribers.
 
+### 6. Audit Log Monthly Partition Provisioning & Maintenance Job
+- **Context**: The `audit_logs` table is partitioned by month (`PARTITION BY RANGE (created_at)`).
+- **Checklist Item**:
+  - Implement a monthly scheduled BullMQ cron worker (`audit-partition-maintainer`) that verifies and pre-provisions child partition tables 2 months in advance (e.g. `CREATE TABLE IF NOT EXISTS audit_logs_yYYYYmMM PARTITION OF audit_logs FOR VALUES FROM (...) TO (...)`).
+  - Automatically apply `ENABLE ROW LEVEL SECURITY`, `FORCE ROW LEVEL SECURITY`, and policy grants on newly created child partitions.
+  - Implement partition archival/dropping according to the statutory data retention policy once defined by legal review (`TODO-REAL-DATA` in `PLACEHOLDERS.md`).
+
+
