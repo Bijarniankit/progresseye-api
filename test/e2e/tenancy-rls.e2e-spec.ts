@@ -1,4 +1,4 @@
-import * as fs from "node:fs";
+import { execSync } from "node:child_process";
 import { BadRequestException } from "@nestjs/common";
 import { PrismaClient } from "@prisma/client";
 import { uuidv7 } from "uuidv7";
@@ -316,36 +316,23 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
       process.env.DATABASE_URL?.substring(0, process.env.DATABASE_URL.lastIndexOf("/")) ??
       "postgresql://postgres:postgrespassword@localhost:5432";
 
-    it("should deploy cleanly from empty database", async () => {
+    it("should deploy cleanly from empty database using prisma migrate deploy", async () => {
       await prisma.$executeRawUnsafe(`DROP DATABASE IF EXISTS test_db_empty;`);
       await prisma.$executeRawUnsafe(`CREATE DATABASE test_db_empty;`);
+
+      execSync("pnpm prisma migrate deploy", {
+        env: {
+          ...process.env,
+          DATABASE_URL: `${dbUrlBase}/test_db_empty`,
+          DIRECT_URL: `${dbUrlBase}/test_db_empty`,
+        },
+        stdio: "pipe",
+      });
 
       const emptyPrisma = new PrismaClient({
         datasources: { db: { url: `${dbUrlBase}/test_db_empty` } },
       });
       await emptyPrisma.$connect();
-
-      const m1 = fs.readFileSync(
-        "prisma/migrations/20261012000000_enable_postgresql_extensions/migration.sql",
-        "utf8",
-      );
-      const m2 = fs.readFileSync(
-        "prisma/migrations/20261024000000_create_public_leads/migration.sql",
-        "utf8",
-      );
-      const m3 = fs.readFileSync(
-        "prisma/migrations/20261024010000_add_notified_at_to_leads/migration.sql",
-        "utf8",
-      );
-      const m4 = fs.readFileSync(
-        "prisma/migrations/20261102000000_tenancy_and_row_level_security/migration.sql",
-        "utf8",
-      );
-
-      await emptyPrisma.$executeRawUnsafe(m1);
-      await emptyPrisma.$executeRawUnsafe(m2);
-      await emptyPrisma.$executeRawUnsafe(m3);
-      await emptyPrisma.$executeRawUnsafe(m4);
 
       const tables: any[] = await emptyPrisma.$queryRaw`
         SELECT tablename FROM pg_tables WHERE schemaname = 'public';
@@ -368,34 +355,96 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
       });
       await mainPrisma.$connect();
 
-      // Apply main migrations (1, 2, 3)
-      const m1 = fs.readFileSync(
-        "prisma/migrations/20261012000000_enable_postgresql_extensions/migration.sql",
-        "utf8",
-      );
-      const m2 = fs.readFileSync(
-        "prisma/migrations/20261024000000_create_public_leads/migration.sql",
-        "utf8",
-      );
-      const m3 = fs.readFileSync(
-        "prisma/migrations/20261024010000_add_notified_at_to_leads/migration.sql",
-        "utf8",
-      );
-      await mainPrisma.$executeRawUnsafe(m1);
-      await mainPrisma.$executeRawUnsafe(m2);
-      await mainPrisma.$executeRawUnsafe(m3);
+      // Apply main migrations 1, 2, 3 statement by statement
+      const statementsM1 = [
+        `CREATE EXTENSION IF NOT EXISTS "pgcrypto";`,
+        `CREATE EXTENSION IF NOT EXISTS "pg_trgm";`,
+        `CREATE EXTENSION IF NOT EXISTS "btree_gist";`,
+        `CREATE EXTENSION IF NOT EXISTS "citext";`,
+        `CREATE TABLE IF NOT EXISTS "schools" (
+            "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+            "slug" TEXT NOT NULL,
+            "name" TEXT NOT NULL,
+            "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT "schools_pkey" PRIMARY KEY ("id")
+        );`,
+        `CREATE UNIQUE INDEX IF NOT EXISTS "schools_slug_key" ON "schools"("slug");`,
+      ];
+      for (const stmt of statementsM1) {
+        await mainPrisma.$executeRawUnsafe(stmt);
+      }
 
-      // Insert existing main data (school without org, public leads)
+      const statementsM2 = [
+        `CREATE TYPE "lead_types" AS ENUM ('CONTACT', 'DEMO', 'NEWSLETTER');`,
+        `CREATE TYPE "lead_statuses" AS ENUM ('NEW', 'CONTACTED', 'ARCHIVED');`,
+        `CREATE TABLE IF NOT EXISTS "public_leads" (
+            "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+            "type" "lead_types" NOT NULL,
+            "name" TEXT,
+            "email" citext NOT NULL,
+            "school_name" TEXT,
+            "message" TEXT,
+            "status" "lead_statuses" NOT NULL DEFAULT 'NEW',
+            "consent_text" TEXT NOT NULL,
+            "consented_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            "ip_address_hash" TEXT,
+            "user_agent" TEXT,
+            "idempotency_key" TEXT,
+            "retention_until" TIMESTAMP(3),
+            "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT "public_leads_pkey" PRIMARY KEY ("id")
+        );`,
+        `CREATE UNIQUE INDEX IF NOT EXISTS "public_leads_idempotency_key_key" ON "public_leads"("idempotency_key");`,
+        `CREATE INDEX IF NOT EXISTS "public_leads_type_created_at_idx" ON "public_leads"("type", "created_at");`,
+        `CREATE INDEX IF NOT EXISTS "public_leads_email_idx" ON "public_leads"("email");`,
+        `CREATE INDEX IF NOT EXISTS "public_leads_status_idx" ON "public_leads"("status");`,
+      ];
+      for (const stmt of statementsM2) {
+        await mainPrisma.$executeRawUnsafe(stmt);
+      }
+
+      const statementsM3 = [
+        `ALTER TABLE "public_leads" ADD COLUMN IF NOT EXISTS "notified_at" TIMESTAMP(3);`,
+      ];
+      for (const stmt of statementsM3) {
+        await mainPrisma.$executeRawUnsafe(stmt);
+      }
+
+      // Insert pre-existing school on main
       await mainPrisma.$executeRawUnsafe(`
         INSERT INTO schools (id, slug, name, updated_at) VALUES ('018f0000-0000-7000-8000-000000000001'::uuid, 'main-school', 'Main School', CURRENT_TIMESTAMP);
       `);
 
-      // Apply Phase 11 upgrade migration
-      const m4 = fs.readFileSync(
-        "prisma/migrations/20261102000000_tenancy_and_row_level_security/migration.sql",
-        "utf8",
-      );
-      await mainPrisma.$executeRawUnsafe(m4);
+      // Initialize prisma migrations table so migrate deploy knows 1, 2, 3 were applied
+      await mainPrisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS "_prisma_migrations" (
+          "id" VARCHAR(36) PRIMARY KEY,
+          "checksum" VARCHAR(64) NOT NULL,
+          "finished_at" TIMESTAMPTZ,
+          "migration_name" VARCHAR(255) NOT NULL,
+          "logs" TEXT,
+          "rolled_back_at" TIMESTAMPTZ,
+          "started_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
+          "applied_steps_count" INTEGER NOT NULL DEFAULT 0
+        );
+        INSERT INTO "_prisma_migrations" (id, checksum, finished_at, migration_name, applied_steps_count)
+        VALUES 
+          ('1', 'checksum1', now(), '20261012000000_enable_postgresql_extensions', 1),
+          ('2', 'checksum2', now(), '20261024000000_create_public_leads', 1),
+          ('3', 'checksum3', now(), '20261024010000_add_notified_at_to_leads', 1);
+      `);
+
+      // Run prisma migrate deploy to apply Phase 11 upgrade migration
+      execSync("pnpm prisma migrate deploy", {
+        env: {
+          ...process.env,
+          DATABASE_URL: `${dbUrlBase}/test_db_from_main`,
+          DIRECT_URL: `${dbUrlBase}/test_db_from_main`,
+        },
+        stdio: "pipe",
+      });
 
       // Verify existing data preserved and new schema active
       const school: any[] = await mainPrisma.$queryRaw`

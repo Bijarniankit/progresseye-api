@@ -449,7 +449,33 @@ CREATE POLICY "counters_tenant_isolation" ON "counters"
 -- 15. Role Grants & Permissions Enforcement
 -- -------------------------------------------------------------
 -- Grant schema usage
+GRANT USAGE, CREATE ON SCHEMA public TO progresseye_owner;
 GRANT USAGE ON SCHEMA public TO progresseye_app, progresseye_ro;
+
+-- Transfer table ownership to progresseye_owner
+ALTER TABLE "organizations" OWNER TO progresseye_owner;
+ALTER TABLE "schools" OWNER TO progresseye_owner;
+ALTER TABLE "academic_years" OWNER TO progresseye_owner;
+ALTER TABLE "users" OWNER TO progresseye_owner;
+ALTER TABLE "sessions" OWNER TO progresseye_owner;
+ALTER TABLE "roles" OWNER TO progresseye_owner;
+ALTER TABLE "permissions" OWNER TO progresseye_owner;
+ALTER TABLE "role_permissions" OWNER TO progresseye_owner;
+ALTER TABLE "user_roles" OWNER TO progresseye_owner;
+ALTER TABLE "audit_logs" OWNER TO progresseye_owner;
+ALTER TABLE "audit_logs_y2026m10" OWNER TO progresseye_owner;
+ALTER TABLE "audit_logs_y2026m11" OWNER TO progresseye_owner;
+ALTER TABLE "audit_logs_y2026m12" OWNER TO progresseye_owner;
+ALTER TABLE "audit_logs_y2027m01" OWNER TO progresseye_owner;
+ALTER TABLE "outbox_events" OWNER TO progresseye_owner;
+ALTER TABLE "counters" OWNER TO progresseye_owner;
+ALTER TABLE "public_leads" OWNER TO progresseye_owner;
+
+-- Table owner full privileges
+GRANT ALL ON ALL TABLES IN SCHEMA public TO progresseye_owner;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO progresseye_owner;
+GRANT ALL ON ALL ROUTINES IN SCHEMA public TO progresseye_owner;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO progresseye_owner;
 
 -- Permissions table: Global catalog (Read-only to application role)
 GRANT SELECT ON "permissions" TO progresseye_app, progresseye_ro;
