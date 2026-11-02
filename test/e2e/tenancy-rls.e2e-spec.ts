@@ -221,21 +221,27 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
       expect(roleInfo.rolcanlogin).toBe(true);
 
       // Query with Tenant A context: sees only Tenant A
-      await ownerPrisma.$executeRaw`SELECT set_config('app.current_school_id', ${schoolA}, true);`;
-      const usersA: any[] = await ownerPrisma.$queryRaw`SELECT id FROM users;`;
-      expect(usersA.length).toBe(1);
-      expect(usersA[0].id).toBe(userAId);
+      await ownerPrisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT set_config('app.current_school_id', ${schoolA}, true);`;
+        const usersA: any[] = await tx.$queryRaw`SELECT id FROM users;`;
+        expect(usersA.length).toBe(1);
+        expect(usersA[0].id).toBe(userAId);
+      });
 
       // Query with Tenant B context: sees only Tenant B
-      await ownerPrisma.$executeRaw`SELECT set_config('app.current_school_id', ${schoolB}, true);`;
-      const usersB: any[] = await ownerPrisma.$queryRaw`SELECT id FROM users;`;
-      expect(usersB.length).toBe(1);
-      expect(usersB[0].id).toBe(userBId);
+      await ownerPrisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT set_config('app.current_school_id', ${schoolB}, true);`;
+        const usersB: any[] = await tx.$queryRaw`SELECT id FROM users;`;
+        expect(usersB.length).toBe(1);
+        expect(usersB[0].id).toBe(userBId);
+      });
 
       // Query with empty context: returns 0 rows (FORCE RLS enforces fail-closed against owner)
-      await ownerPrisma.$executeRaw`SELECT set_config('app.current_school_id', '', true);`;
-      const usersEmpty: any[] = await ownerPrisma.$queryRaw`SELECT id FROM users;`;
-      expect(usersEmpty.length).toBe(0);
+      await ownerPrisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT set_config('app.current_school_id', '', true);`;
+        const usersEmpty: any[] = await tx.$queryRaw`SELECT id FROM users;`;
+        expect(usersEmpty.length).toBe(0);
+      });
 
       await ownerPrisma.$disconnect();
     });
@@ -260,33 +266,37 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
       const logAId = uuidv7();
 
       // Insert audit log for Tenant A in November 2026 partition
-      await appPrisma.$executeRaw`SELECT set_config('app.current_school_id', ${schoolA}, true);`;
-      await appPrisma.$executeRaw`
-        INSERT INTO audit_logs (id, school_id, action, resource, created_at)
-        VALUES (${logAId}::uuid, ${schoolA}::uuid, 'USER_LOGIN', 'users', '2026-11-02 10:00:00'::timestamp);
-      `;
+      await appPrisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT set_config('app.current_school_id', ${schoolA}, true);`;
+        await tx.$executeRaw`
+          INSERT INTO audit_logs (id, school_id, action, resource, created_at)
+          VALUES (${logAId}::uuid, ${schoolA}::uuid, 'USER_LOGIN', 'users', '2026-11-02 10:00:00'::timestamp);
+        `;
 
-      // Direct SELECT on partition returns log
-      const logsA: any[] = await appPrisma.$queryRaw`
-        SELECT id, action FROM audit_logs_y2026m11;
-      `;
-      expect(logsA.length).toBe(1);
-      expect(logsA[0].id).toBe(logAId);
+        // Direct SELECT on partition returns log
+        const logsA: any[] = await tx.$queryRaw`
+          SELECT id, action FROM audit_logs_y2026m11;
+        `;
+        expect(logsA.length).toBe(1);
+        expect(logsA[0].id).toBe(logAId);
 
-      // Attempt direct UPDATE on partition under progresseye_app - MUST FAIL (code 42501 permission denied)
-      await expect(
-        appPrisma.$executeRaw`UPDATE audit_logs_y2026m11 SET action = 'ALTERED';`,
-      ).rejects.toThrow();
+        // Attempt direct UPDATE on partition under progresseye_app - MUST FAIL (code 42501 permission denied)
+        await expect(
+          tx.$executeRaw`UPDATE audit_logs_y2026m11 SET action = 'ALTERED';`,
+        ).rejects.toThrow();
 
-      // Attempt direct DELETE on partition under progresseye_app - MUST FAIL (code 42501 permission denied)
-      await expect(appPrisma.$executeRaw`DELETE FROM audit_logs_y2026m11;`).rejects.toThrow();
+        // Attempt direct DELETE on partition under progresseye_app - MUST FAIL (code 42501 permission denied)
+        await expect(tx.$executeRaw`DELETE FROM audit_logs_y2026m11;`).rejects.toThrow();
+      });
 
       // Tenant B direct partition query returns 0 rows
-      await appPrisma.$executeRaw`SELECT set_config('app.current_school_id', ${schoolB}, true);`;
-      const logsB: any[] = await appPrisma.$queryRaw`
-        SELECT id FROM audit_logs_y2026m11;
-      `;
-      expect(logsB.length).toBe(0);
+      await appPrisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT set_config('app.current_school_id', ${schoolB}, true);`;
+        const logsB: any[] = await tx.$queryRaw`
+          SELECT id FROM audit_logs_y2026m11;
+        `;
+        expect(logsB.length).toBe(0);
+      });
 
       await appPrisma.$disconnect();
     });
@@ -302,33 +312,37 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
       const futureLogId = uuidv7();
 
       // Insert audit log dated 2027-02-15 (beyond the 2027-01 monthly partition)
-      await appPrisma.$executeRaw`SELECT set_config('app.current_school_id', ${schoolA}, true);`;
-      await appPrisma.$executeRaw`
-        INSERT INTO audit_logs (id, school_id, action, resource, created_at)
-        VALUES (${futureLogId}::uuid, ${schoolA}::uuid, 'FUTURE_EVENT', 'audit_default', '2027-02-15 10:00:00'::timestamp);
-      `;
+      await appPrisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT set_config('app.current_school_id', ${schoolA}, true);`;
+        await tx.$executeRaw`
+          INSERT INTO audit_logs (id, school_id, action, resource, created_at)
+          VALUES (${futureLogId}::uuid, ${schoolA}::uuid, 'FUTURE_EVENT', 'audit_default', '2027-02-15 10:00:00'::timestamp);
+        `;
 
-      // Direct SELECT on audit_logs_default returns the log for School A
-      const logsDefaultA: any[] = await appPrisma.$queryRaw`
-        SELECT id, action FROM audit_logs_default WHERE id = ${futureLogId}::uuid;
-      `;
-      expect(logsDefaultA.length).toBe(1);
-      expect(logsDefaultA[0].id).toBe(futureLogId);
+        // Direct SELECT on audit_logs_default returns the log for School A
+        const logsDefaultA: any[] = await tx.$queryRaw`
+          SELECT id, action FROM audit_logs_default WHERE id = ${futureLogId}::uuid;
+        `;
+        expect(logsDefaultA.length).toBe(1);
+        expect(logsDefaultA[0].id).toBe(futureLogId);
+      });
 
       // Direct SELECT on audit_logs_default for School B returns 0 rows (RLS enforced)
-      await appPrisma.$executeRaw`SELECT set_config('app.current_school_id', ${schoolB}, true);`;
-      const logsDefaultB: any[] = await appPrisma.$queryRaw`
-        SELECT id FROM audit_logs_default WHERE id = ${futureLogId}::uuid;
-      `;
-      expect(logsDefaultB.length).toBe(0);
+      await appPrisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT set_config('app.current_school_id', ${schoolB}, true);`;
+        const logsDefaultB: any[] = await tx.$queryRaw`
+          SELECT id FROM audit_logs_default WHERE id = ${futureLogId}::uuid;
+        `;
+        expect(logsDefaultB.length).toBe(0);
 
-      // Attempt UPDATE/DELETE on audit_logs_default under progresseye_app fails (permission denied)
-      await expect(
-        appPrisma.$executeRaw`UPDATE audit_logs_default SET action = 'MUTATED';`,
-      ).rejects.toThrow();
-      await expect(
-        appPrisma.$executeRaw`DELETE FROM audit_logs_default WHERE id = ${futureLogId}::uuid;`,
-      ).rejects.toThrow();
+        // Attempt UPDATE/DELETE on audit_logs_default under progresseye_app fails (permission denied)
+        await expect(
+          tx.$executeRaw`UPDATE audit_logs_default SET action = 'MUTATED';`,
+        ).rejects.toThrow();
+        await expect(
+          tx.$executeRaw`DELETE FROM audit_logs_default WHERE id = ${futureLogId}::uuid;`,
+        ).rejects.toThrow();
+      });
 
       await appPrisma.$disconnect();
     });
