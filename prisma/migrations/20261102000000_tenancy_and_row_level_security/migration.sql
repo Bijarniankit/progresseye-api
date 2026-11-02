@@ -49,6 +49,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS "organizations_slug_key" ON "organizations"("s
 ALTER TABLE "schools" ADD COLUMN IF NOT EXISTS "organization_id" UUID;
 ALTER TABLE "schools" ADD COLUMN IF NOT EXISTS "is_active" BOOLEAN NOT NULL DEFAULT true;
 ALTER TABLE "schools" ADD COLUMN IF NOT EXISTS "deleted_at" TIMESTAMP(3);
+ALTER TABLE "schools" ALTER COLUMN "updated_at" SET DEFAULT CURRENT_TIMESTAMP;
 
 -- Replace unconditional unique index with partial unique index WHERE deleted_at IS NULL
 DROP INDEX IF EXISTS "schools_slug_key";

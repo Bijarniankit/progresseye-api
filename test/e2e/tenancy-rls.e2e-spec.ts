@@ -33,10 +33,10 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
     `;
 
     await prisma.$executeRaw`
-      INSERT INTO schools (id, organization_id, slug, name, is_active)
+      INSERT INTO schools (id, organization_id, slug, name, is_active, updated_at)
       VALUES 
-        (${schoolA}::uuid, ${orgId}::uuid, 'school-a', 'School Alpha', true),
-        (${schoolB}::uuid, ${orgId}::uuid, 'school-b', 'School Beta', true);
+        (${schoolA}::uuid, ${orgId}::uuid, 'school-a', 'School Alpha', true, CURRENT_TIMESTAMP),
+        (${schoolB}::uuid, ${orgId}::uuid, 'school-b', 'School Beta', true, CURRENT_TIMESTAMP);
     `;
 
     // Seed test users
@@ -387,7 +387,7 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
 
       // Insert existing main data (school without org, public leads)
       await mainPrisma.$executeRawUnsafe(`
-        INSERT INTO schools (id, slug, name) VALUES ('018f0000-0000-7000-8000-000000000001'::uuid, 'main-school', 'Main School');
+        INSERT INTO schools (id, slug, name, updated_at) VALUES ('018f0000-0000-7000-8000-000000000001'::uuid, 'main-school', 'Main School', CURRENT_TIMESTAMP);
       `);
 
       // Apply Phase 11 upgrade migration
