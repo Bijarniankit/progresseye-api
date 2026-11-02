@@ -167,23 +167,24 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
 
   describe("Test 07: Missing Tenant Context (Fail-Closed)", () => {
     it("should return 0 rows for all tenant tables when app.current_school_id is unset", async () => {
-      const client = prisma.client;
-      await client.$executeRawUnsafe(`SET ROLE progresseye_app;`);
-      await client.$executeRawUnsafe(`SELECT set_config('app.current_school_id', '', true);`);
+      const appPrisma = new PrismaClient({
+        datasources: { db: { url: appDbUrl } },
+      });
+      await appPrisma.$connect();
 
-      const users: any[] = await client.$queryRaw`SELECT id FROM users;`;
+      const users: any[] = await appPrisma.$queryRaw`SELECT id FROM users;`;
       expect(users.length).toBe(0);
 
-      const academicYears: any[] = await client.$queryRaw`SELECT id FROM academic_years;`;
+      const academicYears: any[] = await appPrisma.$queryRaw`SELECT id FROM academic_years;`;
       expect(academicYears.length).toBe(0);
 
-      const sessions: any[] = await client.$queryRaw`SELECT id FROM sessions;`;
+      const sessions: any[] = await appPrisma.$queryRaw`SELECT id FROM sessions;`;
       expect(sessions.length).toBe(0);
 
-      const auditLogs: any[] = await client.$queryRaw`SELECT id FROM audit_logs;`;
+      const auditLogs: any[] = await appPrisma.$queryRaw`SELECT id FROM audit_logs;`;
       expect(auditLogs.length).toBe(0);
 
-      await client.$executeRawUnsafe(`RESET ROLE;`);
+      await appPrisma.$disconnect();
     });
   });
 
