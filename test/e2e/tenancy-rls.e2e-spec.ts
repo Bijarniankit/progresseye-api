@@ -236,6 +236,15 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
         expect(usersB[0].id).toBe(userBId);
       });
 
+      // Cross-tenant read under owner: with Tenant A context, querying for Tenant B's rows returns 0 rows
+      await ownerPrisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT set_config('app.current_school_id', ${schoolA}, true);`;
+        const crossTenantUsers: any[] = await tx.$queryRaw`
+          SELECT id FROM users WHERE school_id = ${schoolB}::uuid;
+        `;
+        expect(crossTenantUsers.length).toBe(0);
+      });
+
       // Query with empty context: returns 0 rows (FORCE RLS enforces fail-closed against owner)
       await ownerPrisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT set_config('app.current_school_id', '', true);`;
@@ -350,51 +359,32 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
 
   describe("Test 12: Service Call Under App Role & Concurrent Tenant Isolation", () => {
     it("should isolate pooled client service calls and concurrent requests across tenants", async () => {
-      const appPrisma = new PrismaClient({
+      const appPrismaService = new PrismaService(tenantContext, {
         datasources: { db: { url: appDbUrl } },
       });
-      await appPrisma.$connect();
+      await appPrismaService.$connect();
 
-      // Tenant extension replicating PrismaService on appPrisma
-      const appClient = appPrisma.$extends({
-        query: {
-          $allModels: {
-            async $allOperations({ model, operation, args, query }) {
-              const schoolId = tenantContext.getTenantId();
-              if (!schoolId) {
-                return query(args);
-              }
-              return (appPrisma as any).$transaction(async (tx: any) => {
-                await tx.$executeRaw`SELECT set_config('app.current_school_id', ${schoolId}, true)`;
-                const modelKey = model.charAt(0).toLowerCase() + model.slice(1);
-                return (tx[modelKey] ?? tx[model])[operation](args);
-              });
-            },
-          },
-        },
-      });
-
-      // 1. Normal service call for Tenant A returns ONLY Tenant A rows
+      // 1. Normal service call for Tenant A returns ONLY Tenant A rows via Nest PrismaService.client
       await tenantContext.run({ schoolId: schoolA }, async () => {
-        const users = await (appClient as any).user.findMany();
+        const users = await (appPrismaService.client as any).user.findMany();
         expect(users.length).toBe(1);
         expect(users[0].id).toBe(userAId);
         expect(users[0].schoolId).toBe(schoolA);
       });
 
-      // 2. Normal service call for Tenant B returns ONLY Tenant B rows
+      // 2. Normal service call for Tenant B returns ONLY Tenant B rows via Nest PrismaService.client
       await tenantContext.run({ schoolId: schoolB }, async () => {
-        const users = await (appClient as any).user.findMany();
+        const users = await (appPrismaService.client as any).user.findMany();
         expect(users.length).toBe(1);
         expect(users[0].id).toBe(userBId);
         expect(users[0].schoolId).toBe(schoolB);
       });
 
-      // 3. Concurrent requests on pooled client never cross-contaminate
+      // 3. Concurrent requests on pooled client never cross-contaminate (20 parallel requests: 10 Tenant A, 10 Tenant B)
       const tasks = [
         ...Array.from({ length: 10 }).map(() =>
           tenantContext.run({ schoolId: schoolA }, async () => {
-            const users = await (appClient as any).user.findMany();
+            const users = await (appPrismaService.client as any).user.findMany();
             expect(users.length).toBe(1);
             expect(users[0].id).toBe(userAId);
             return users[0].id;
@@ -402,7 +392,7 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
         ),
         ...Array.from({ length: 10 }).map(() =>
           tenantContext.run({ schoolId: schoolB }, async () => {
-            const users = await (appClient as any).user.findMany();
+            const users = await (appPrismaService.client as any).user.findMany();
             expect(users.length).toBe(1);
             expect(users[0].id).toBe(userBId);
             return users[0].id;
@@ -414,7 +404,7 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
       expect(results.filter((id) => id === userAId).length).toBe(10);
       expect(results.filter((id) => id === userBId).length).toBe(10);
 
-      await appPrisma.$disconnect();
+      await appPrismaService.$disconnect();
     });
   });
 

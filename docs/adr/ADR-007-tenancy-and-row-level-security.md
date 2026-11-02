@@ -42,7 +42,7 @@ The application database user `progresseye_app` is provisioned strictly with `NO
 4. **Organization-Level Access**:
    Multi-school entities (e.g. trusts/districts) query member schools by iterating across member `school_id` values in separate tenant-scoped transactions, or through a dedicated organization-level policy in Phase 13.
 5. **Platform-Level Audit Trail**:
-   Because `audit_logs.school_id` is `NOT NULL` to guarantee fail-closed tenant boundary enforcement and prevent null-bypass vulnerabilities in RLS, platform-level audit events (e.g. platform admin global actions, marketing lead submissions, tenant provisioning) cannot be placed in the tenant `audit_logs` table. Platform-level events are routed to a separate platform audit sink (`platform_audit_logs` / structured system logs) which is platform-owned and outside tenant RLS.
+   Because `audit_logs.school_id` is `NOT NULL` to guarantee fail-closed tenant boundary enforcement and prevent null-bypass vulnerabilities in RLS, platform-level audit events (e.g. platform admin global actions, marketing lead submissions, tenant provisioning) cannot be placed in the tenant `audit_logs` table. In Phase 11, the `platform_audit_logs` table does not exist; platform audit logging is planned for a future phase (tracked in BACKLOG.md item 7), and platform events in the interim route to structured system logs outside tenant RLS.
 
 ### 3. Tenant Context Injection & Nil-UUID Fail-Closed Mechanism
 - Tenant context is set per transaction via PostgreSQL's built-in session parameter function:
@@ -74,6 +74,11 @@ The application database user `progresseye_app` is provisioned strictly with `NO
 - Multi-tenancy is integrated into Prisma Client via a custom client extension (`$extends`).
 - The extension intercepts model queries, `$queryRaw`, and `$executeRaw`.
 - When an outer transaction is already active, the extension executes within the existing transaction without nesting; otherwise, it opens an interactive transaction, executes `set_config('app.current_school_id', $1, true)`, and runs the target operation.
+
+### 7. Primary Keys and UUIDv7 Generation Scope
+- Tenant and entity IDs use time-ordered UUIDv7 for index locality and B-tree write performance.
+- At the schema layer, IDs specify `@default(dbgenerated("gen_random_uuid()"))` as a database fallback.
+- In Phase 11, application-generated UUIDv7 (`uuidv7()` from the `uuidv7` package) is implemented and utilized strictly within test suites and `prisma/seed.ts`. Entity creation application services in `src/` will generate application-level UUIDv7 values upon implementation in Phase 12+.
 
 ## Consequences
 ### Positive

@@ -6,8 +6,11 @@ import { TenantContextService } from "../../common/request-context/tenant-contex
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   private _tenantClient: any;
 
-  constructor(@Optional() private readonly tenantContext?: TenantContextService) {
-    super();
+  constructor(
+    @Optional() private readonly tenantContext?: TenantContextService,
+    options?: ConstructorParameters<typeof PrismaClient>[0],
+  ) {
+    super(options);
   }
 
   async onModuleInit(): Promise<void> {
