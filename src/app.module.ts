@@ -3,6 +3,7 @@ import { APP_FILTER, APP_GUARD } from "@nestjs/core";
 import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 import { LoggerModule } from "nestjs-pino";
 import { ProblemExceptionFilter } from "./common/filters/problem-exception.filter";
+import { TenantContextModule } from "./common/request-context/tenant-context.module";
 import { ConfigModule } from "./config/config.module";
 import { AppConfigService } from "./config/config.service";
 import { PrismaModule } from "./infra/prisma/prisma.module";
@@ -15,6 +16,7 @@ import { PublicModule } from "./modules/public/public.module";
 @Module({
   imports: [
     ConfigModule,
+    TenantContextModule,
     LoggerModule.forRootAsync({
       imports: [ConfigModule],
       inject: [AppConfigService],

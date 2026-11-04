@@ -37,3 +37,22 @@ Deferred maintenance chores and dependency upgrades scheduled for execution at t
 ### 5. Newsletter Double Opt-In Workflow
 - **Checklist Item**: Implement double opt-in confirmation email token dispatch and verification endpoint for newsletter subscribers.
 
+### 6. Audit Log Monthly Partition Provisioning & Maintenance Job
+- **Context**: The `audit_logs` table is partitioned by month (`PARTITION BY RANGE (created_at)`).
+- **Checklist Item**:
+  - Implement a monthly scheduled BullMQ cron worker (`audit-partition-maintainer`) that verifies and pre-provisions child partition tables 2 months in advance (e.g. `CREATE TABLE IF NOT EXISTS audit_logs_yYYYYmMM PARTITION OF audit_logs FOR VALUES FROM (...) TO (...)`).
+  - Automatically apply `ENABLE ROW LEVEL SECURITY`, `FORCE ROW LEVEL SECURITY`, and policy grants on newly created child partitions.
+  - Implement partition archival/dropping according to the statutory data retention policy once defined by legal review (`TODO-REAL-DATA` in `PLACEHOLDERS.md`).
+  - **Default Partition Caveat (Detach / Move / Attach Procedure)**: In PostgreSQL, if rows for a target month have landed in the catch-all partition (`audit_logs_default`), directly creating or attaching that month's partition will fail with `ERROR: updated partition constraint for default partition "audit_logs_default" would be violated by some row`. The maintenance job must execute the following detach/move/attach sequence:
+    1. Detach default partition: `ALTER TABLE audit_logs DETACH PARTITION audit_logs_default;`
+    2. Move matching rows: `INSERT INTO audit_logs_yYYYYmMM SELECT * FROM audit_logs_default WHERE created_at >= 'YYYY-MM-01' AND created_at < 'YYYY-NEXT_MM-01';` followed by `DELETE FROM audit_logs_default WHERE created_at >= 'YYYY-MM-01' AND created_at < 'YYYY-NEXT_MM-01';`
+    3. Attach new partition: `ALTER TABLE audit_logs ATTACH PARTITION audit_logs_yYYYYmMM FOR VALUES FROM ('YYYY-MM-01') TO ('YYYY-NEXT_MM-01');`
+    4. Re-attach default partition: `ALTER TABLE audit_logs ATTACH PARTITION audit_logs_default DEFAULT;`
+
+### 7. Provisioning Platform-Level Audit Log Sink (`platform_audit_logs`)
+- **Context**: In Phase 11, `audit_logs` is strictly tenant-scoped with `school_id NOT NULL` and RLS enforced. Platform-level audit events (such as tenant provisioning, global administrative operations, and public lead submissions) cannot be stored in `audit_logs` without bypassing or weakening RLS.
+- **Checklist Item**:
+  - Provision a dedicated `platform_audit_logs` table (or external structured audit log sink) owned by the platform schema without tenant RLS constraints.
+  - Implement platform audit logging service to capture tenant provisioning and cross-tenant platform events.
+
+
