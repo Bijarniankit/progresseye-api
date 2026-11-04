@@ -80,26 +80,32 @@ describe("Prisma Tenant Extension", () => {
     expect(mockExecuteRaw).toHaveBeenCalledTimes(2); // 1 for set_config, 1 for the update
   });
 
-  it("should not nest transactions if an outer transaction is already active", async () => {
+  it("should provide withTenant method that sets tenant context and passes tx", async () => {
     const schoolId = uuidv7();
     const mockExecuteRaw = jest.fn().mockResolvedValue(1);
+    const mockTx = {
+      $executeRaw: mockExecuteRaw,
+      user: {
+        findMany: jest.fn().mockResolvedValue([{ id: "u1" }]),
+      },
+    };
+    prisma.$transaction = jest
+      .fn()
+      .mockImplementation(async (cb: (tx: any) => Promise<any>) => cb(mockTx));
 
-    // Mock internal request handler so Prisma engine does not connect to localhost:5432
-    if ((prisma as any)._requestHandler) {
-      (prisma as any)._requestHandler.request = jest.fn().mockResolvedValue([]);
-    }
-
-    // Simulating an active transaction client where $transaction is not a function
-    (prisma as any).$transaction = undefined;
-    (prisma as any).$executeRaw = mockExecuteRaw;
-
-    await tenantContext.run({ schoolId }, async () => {
-      const client = prisma.client;
-      await (client as any).user.findMany();
+    const result = await prisma.withTenant(schoolId, async (tx) => {
+      return (tx as any).user.findMany();
     });
 
-    // Outer transaction was reused, no nested transaction opened
-    expect((prisma as any).$transaction).toBeUndefined();
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     expect(mockExecuteRaw).toHaveBeenCalledTimes(1);
+    expect(result).toEqual([{ id: "u1" }]);
+  });
+
+  it("should forbid nested $transaction on the tenant-scoped extended client", async () => {
+    const client = prisma.client;
+    await expect((client as any).$transaction(async () => {})).rejects.toThrow(
+      "Nested $transaction is not permitted on tenant-scoped client",
+    );
   });
 });

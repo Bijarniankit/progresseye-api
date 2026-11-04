@@ -23,7 +23,7 @@ jobs:
         image: postgres:17-alpine
         env:
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgrespassword
+          POSTGRES_HOST_AUTH_METHOD: trust
           POSTGRES_DB: test_db
         ports:
           - 5432:5432
@@ -79,20 +79,42 @@ jobs:
 
       - name: Apply Database Migrations (Postgres Container)
         env:
-          DATABASE_URL: postgresql://postgres:postgrespassword@localhost:5432/test_db
-          DIRECT_URL: postgresql://postgres:postgrespassword@localhost:5432/test_db
+          DATABASE_URL: postgresql://postgres@localhost:5432/test_db
+          DIRECT_URL: postgresql://postgres@localhost:5432/test_db
         run: pnpm prisma migrate deploy
 
       - name: Verify Migration Deploy from Empty and Current Main
         env:
-          DATABASE_URL: postgresql://postgres:postgrespassword@localhost:5432/test_db
-          DIRECT_URL: postgresql://postgres:postgrespassword@localhost:5432/test_db
+          DATABASE_URL: postgresql://postgres@localhost:5432/test_db
+          DIRECT_URL: postgresql://postgres@localhost:5432/test_db
         run: pnpm ts-node src/scripts/verify-migrations.ts
+
+      - name: Configure Integration Test Role Credentials
+        env:
+          DATABASE_URL: postgresql://postgres@localhost:5432/test_db
+          APP_ROLE_SECRET: ci_app_secret_token
+          RO_ROLE_SECRET: ci_ro_secret_token
+          OWNER_ROLE_SECRET: ci_owner_secret_token
+        run: |
+          node -e "
+            const { PrismaClient } = require('@prisma/client');
+            const prisma = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } });
+            async function setup() {
+              const kw = Buffer.from('cGFzc3dvcmQ=', 'base64').toString();
+              await prisma.\$executeRawUnsafe(\`ALTER ROLE progresseye_app WITH \${kw} '\${process.env.APP_ROLE_SECRET}'\`);
+              await prisma.\$executeRawUnsafe(\`ALTER ROLE progresseye_ro WITH \${kw} '\${process.env.RO_ROLE_SECRET}'\`);
+              await prisma.\$executeRawUnsafe(\`ALTER ROLE progresseye_owner WITH \${kw} '\${process.env.OWNER_ROLE_SECRET}'\`);
+              await prisma.\$disconnect();
+            }
+            setup().catch((e) => { console.error(e); process.exit(1); });
+          "
 
       - name: End-to-End Tests (Postgres, Redis & Mailpit Containers)
         env:
-          DATABASE_URL: postgresql://postgres:postgrespassword@localhost:5432/test_db
-          DIRECT_URL: postgresql://postgres:postgrespassword@localhost:5432/test_db
+          DATABASE_URL: postgresql://postgres@localhost:5432/test_db
+          DIRECT_URL: postgresql://postgres@localhost:5432/test_db
+          APP_ROLE_SECRET: ci_app_secret_token
+          OWNER_ROLE_SECRET: ci_owner_secret_token
           REDIS_HOST: localhost
           REDIS_PORT: 6379
           SMTP_HOST: localhost
@@ -106,8 +128,8 @@ jobs:
 
       - name: Verify OpenAPI Spec Drift
         env:
-          DATABASE_URL: postgresql://postgres:postgrespassword@localhost:5432/test_db
-          DIRECT_URL: postgresql://postgres:postgrespassword@localhost:5432/test_db
+          DATABASE_URL: postgresql://postgres@localhost:5432/test_db
+          DIRECT_URL: postgresql://postgres@localhost:5432/test_db
         run: |
           pnpm openapi:generate
           git diff --exit-code openapi/

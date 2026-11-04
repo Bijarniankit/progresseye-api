@@ -63,22 +63,24 @@ The application database user `progresseye_app` is provisioned strictly with `NO
 - RLS policies and `FORCE ROW LEVEL SECURITY` are applied to both the parent `audit_logs` table and each underlying monthly child partition (`audit_logs_yYYYYmMM`).
 - Database privilege grants for `progresseye_app` on `audit_logs` and its partitions are restricted strictly to `SELECT` and `INSERT`. `UPDATE` and `DELETE` privileges are explicitly revoked.
 
-### 5. AWS RDS Master Role Compatibility
+### 5. AWS RDS Master Role Compatibility & Role Credentials
 - In AWS RDS PostgreSQL, the administrative user (`rds_superuser`) is not a native PostgreSQL superuser.
 - While `ALTER TABLE ... FORCE ROW LEVEL SECURITY` and `CREATE POLICY` operate cleanly, operations altering role superuser attributes differ from plain PostgreSQL.
 - Database provisioning documentation marks RDS-specific steps as `UNVERIFIED` pending staging deployment, referencing the AWS RDS PostgreSQL documentation:
   `https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.MasterAccounts.html`
 - CI runs against plain PostgreSQL 17 containers.
+- **Role Credentials & Staging Provisioning**: Database role passwords are never committed in migrations or git. In CI, throwaway role passwords are configured from workflow env via a dedicated step. On staging and production, credentials for `progresseye_app`, `progresseye_ro`, and `progresseye_owner` are provisioned from AWS Systems Manager (SSM) Parameter Store / AWS Secrets Manager.
 
-### 6. Prisma Client Extension Implementation
-- Multi-tenancy is integrated into Prisma Client via a custom client extension (`$extends`).
-- The extension intercepts model queries, `$queryRaw`, and `$executeRaw`.
-- When an outer transaction is already active, the extension executes within the existing transaction without nesting; otherwise, it opens an interactive transaction, executes `set_config('app.current_school_id', $1, true)`, and runs the target operation.
+### 6. Prisma Service Transaction & Tenant Scoping Architecture
+- Multi-tenancy and transaction scoping are centralized in `PrismaService`:
+  - `prisma.withTenant(schoolId, fn)` serves as the transactional entry point: it opens a single interactive transaction, executes `SELECT set_config('app.current_school_id', $1, true)` once on that connection, and passes `tx` to the caller. If `fn` throws, the transaction rolls back cleanly.
+  - The extended client (`prisma.client`) scopes individual model operations, `$queryRaw`, and `$executeRaw` by delegating through `withTenant`.
+  - A guard on `prisma.client.$transaction` explicitly forbids nested `$transaction` calls on the extended client, preventing nested connection leakage and directing callers to `withTenant`.
 
 ### 7. Primary Keys and UUIDv7 Generation Scope
-- Tenant and entity IDs use time-ordered UUIDv7 for index locality and B-tree write performance.
-- At the schema layer, IDs specify `@default(dbgenerated("gen_random_uuid()"))` as a database fallback.
-- In Phase 11, application-generated UUIDv7 (`uuidv7()` from the `uuidv7` package) is implemented and utilized strictly within test suites and `prisma/seed.ts`. Entity creation application services in `src/` will generate application-level UUIDv7 values upon implementation in Phase 12+.
+- Tenant and entity IDs are designed to use time-ordered UUIDv7 for index locality and B-tree write performance.
+- At the schema layer, all operational tables specify `@default(dbgenerated("gen_random_uuid()"))` as the database fallback.
+- In Phase 11, application-generated UUIDv7 (`uuidv7()` from the `uuidv7` package) is implemented and utilized strictly within test suites and `prisma/seed.ts`, not yet in entity domain services. Domain services in `src/` will generate application-level UUIDv7 values upon implementation in Phase 12+.
 
 ## Consequences
 ### Positive

@@ -4,7 +4,7 @@ import { PrismaClient } from "@prisma/client";
 async function main() {
   const dbUrlBase =
     process.env.DATABASE_URL?.substring(0, process.env.DATABASE_URL.lastIndexOf("/")) ??
-    "postgresql://postgres:postgrespassword@localhost:5432";
+    "postgresql://postgres@localhost:5432";
 
   console.log("=== 1. Testing Migration Deploy from Empty Database ===");
   const adminPrisma = new PrismaClient({

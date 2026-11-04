@@ -1,5 +1,5 @@
 import { Injectable, type OnModuleDestroy, type OnModuleInit, Optional } from "@nestjs/common";
-import { PrismaClient } from "@prisma/client";
+import { type Prisma, PrismaClient } from "@prisma/client";
 import { TenantContextService } from "../../common/request-context/tenant-context.service";
 
 @Injectable()
@@ -46,10 +46,28 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   }
 
   /**
-   * Returns a Prisma Client instance extended to enforce tenant scoping.
-   * If an active schoolId exists in TenantContextService, wraps operations
-   * in a transaction that runs SELECT set_config('app.current_school_id', $1, true).
-   * Does not nest transactions if an outer transaction is already active.
+   * Executes a callback within a single tenant-scoped transaction.
+   * Runs `SELECT set_config('app.current_school_id', $1, true)` once on the
+   * transaction connection and passes `tx` to the caller. If the callback
+   * throws, the transaction rolls back cleanly.
+   */
+  async withTenant<T>(
+    schoolId: string,
+    fn: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    if (this.tenantContext) {
+      this.tenantContext.validateTenantId(schoolId);
+    }
+    return this.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.current_school_id', ${schoolId}, true)`;
+      return fn(tx);
+    });
+  }
+
+  /**
+   * Returns a Prisma Client instance extended to enforce tenant scoping on individual operations.
+   * If an active schoolId exists in TenantContextService, routes operations through withTenant.
+   * Forbids nested $transaction on the extended client to prevent accidental nested connection leakage.
    */
   get client(): this {
     if (!this.tenantContext) {
@@ -60,6 +78,13 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       const basePrisma = this;
 
       this._tenantClient = this.$extends({
+        client: {
+          async $transaction() {
+            throw new Error(
+              "Nested $transaction is not permitted on tenant-scoped client. Use prisma.withTenant(schoolId, fn) for transactional workflows.",
+            );
+          },
+        },
         query: {
           $allModels: {
             async $allOperations({ model, operation, args, query }) {
@@ -67,19 +92,17 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
               if (!schoolId) {
                 return query(args);
               }
-              // Check if already inside an active transaction client (where $transaction is undefined)
-              const isTransactionClient = typeof (basePrisma as any).$transaction !== "function";
-              if (isTransactionClient) {
-                await (basePrisma as any)
-                  .$executeRaw`SELECT set_config('app.current_school_id', ${schoolId}, true)`;
+              return basePrisma.withTenant(schoolId, async (tx) => {
+                const modelKey = (model.charAt(0).toLowerCase() +
+                  model.slice(1)) as keyof Prisma.TransactionClient;
+                const delegate = tx[modelKey] as
+                  | Record<string, ((a: unknown) => Promise<unknown>) | undefined>
+                  | undefined;
+                const op = delegate?.[operation];
+                if (typeof op === "function") {
+                  return op(args);
+                }
                 return query(args);
-              }
-
-              return (basePrisma as any).$transaction(async (tx: any) => {
-                await tx.$executeRaw`SELECT set_config('app.current_school_id', ${schoolId}, true)`;
-                const modelKey = model.charAt(0).toLowerCase() + model.slice(1);
-                const targetModel = tx[modelKey] ?? tx[model];
-                return targetModel[operation](args);
               });
             },
           },
@@ -88,15 +111,10 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
             if (!schoolId) {
               return query(args);
             }
-            const isTransactionClient = typeof (basePrisma as any).$transaction !== "function";
-            if (isTransactionClient) {
-              await (basePrisma as any)
-                .$executeRaw`SELECT set_config('app.current_school_id', ${schoolId}, true)`;
-              return query(args);
-            }
-            return (basePrisma as any).$transaction(async (tx: any) => {
-              await tx.$executeRaw`SELECT set_config('app.current_school_id', ${schoolId}, true)`;
-              return tx.$queryRaw(args as any);
+            return basePrisma.withTenant(schoolId, async (tx) => {
+              return (tx as unknown as { $queryRaw: (a: unknown) => Promise<unknown> }).$queryRaw(
+                args,
+              );
             });
           },
           async $executeRaw({ args, query }) {
@@ -104,15 +122,10 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
             if (!schoolId) {
               return query(args);
             }
-            const isTransactionClient = typeof (basePrisma as any).$transaction !== "function";
-            if (isTransactionClient) {
-              await (basePrisma as any)
-                .$executeRaw`SELECT set_config('app.current_school_id', ${schoolId}, true)`;
-              return query(args);
-            }
-            return (basePrisma as any).$transaction(async (tx: any) => {
-              await tx.$executeRaw`SELECT set_config('app.current_school_id', ${schoolId}, true)`;
-              return tx.$executeRaw(args as any);
+            return basePrisma.withTenant(schoolId, async (tx) => {
+              return (
+                tx as unknown as { $executeRaw: (a: unknown) => Promise<unknown> }
+              ).$executeRaw(args);
             });
           },
         },

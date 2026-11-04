@@ -8,23 +8,17 @@ DO $$
 BEGIN
     -- Application role: runs the API server, strictly NOBYPASSRLS
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'progresseye_app') THEN
-        CREATE ROLE progresseye_app WITH LOGIN PASSWORD 'apppassword' NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE;
-    ELSE
-        ALTER ROLE progresseye_app WITH LOGIN PASSWORD 'apppassword' NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE;
+        CREATE ROLE progresseye_app WITH LOGIN NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE;
     END IF;
 
     -- Read-only role: for MCP inspection, telemetry, and analytics, strictly NOBYPASSRLS
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'progresseye_ro') THEN
-        CREATE ROLE progresseye_ro WITH LOGIN PASSWORD 'ropassword' NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE;
-    ELSE
-        ALTER ROLE progresseye_ro WITH LOGIN PASSWORD 'ropassword' NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE;
+        CREATE ROLE progresseye_ro WITH LOGIN NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE;
     END IF;
 
     -- Owner role: runs migrations, maintains DDL schema, strictly NOBYPASSRLS
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'progresseye_owner') THEN
-        CREATE ROLE progresseye_owner WITH LOGIN PASSWORD 'ownerpassword' NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE;
-    ELSE
-        ALTER ROLE progresseye_owner WITH LOGIN PASSWORD 'ownerpassword' NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE;
+        CREATE ROLE progresseye_owner WITH LOGIN NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE;
     END IF;
 
     EXECUTE format('GRANT CONNECT ON DATABASE %I TO progresseye_owner, progresseye_app, progresseye_ro', current_database());

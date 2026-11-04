@@ -16,15 +16,23 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
   const userAId = uuidv7();
   const userBId = uuidv7();
 
-  const dbUrlStr =
-    process.env.DATABASE_URL ?? "postgresql://postgres:postgrespassword@localhost:5432/test_db";
+  const dbUrlStr = process.env.DATABASE_URL ?? "postgresql://postgres@localhost:5432/test_db";
   const urlObj = new URL(dbUrlStr);
   const host = urlObj.hostname;
   const port = urlObj.port || "5432";
   const dbName = urlObj.pathname.replace(/^\//, "");
 
-  const appDbUrl = `postgresql://progresseye_app:apppassword@${host}:${port}/${dbName}`;
-  const ownerDbUrl = `postgresql://progresseye_owner:ownerpassword@${host}:${port}/${dbName}`;
+  const appSecret = process.env.APP_ROLE_SECRET ?? "";
+  const ownerSecret = process.env.OWNER_ROLE_SECRET ?? "";
+  const appAuth = appSecret ? `:${appSecret}` : "";
+  const ownerAuth = ownerSecret ? `:${ownerSecret}` : "";
+
+  const appDbUrl =
+    process.env.APP_DATABASE_URL ??
+    `postgresql://progresseye_app${appAuth}@${host}:${port}/${dbName}`;
+  const ownerDbUrl =
+    process.env.OWNER_DATABASE_URL ??
+    `postgresql://progresseye_owner${ownerAuth}@${host}:${port}/${dbName}`;
 
   beforeAll(async () => {
     tenantContext = new TenantContextService();
@@ -358,54 +366,160 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
     });
   });
 
-  describe("Test 12: Service Call Under App Role & Concurrent Tenant Isolation", () => {
-    it("should isolate pooled client service calls and concurrent requests across tenants", async () => {
-      const appPrismaService = new PrismaService(tenantContext, {
+  describe("Test 12: Caller Transactions, Extension Scoping & Concurrency Isolation", () => {
+    let appPrismaService: PrismaService;
+
+    beforeAll(async () => {
+      appPrismaService = new PrismaService(tenantContext, {
         datasources: { db: { url: appDbUrl } },
       });
       await appPrismaService.$connect();
+    });
 
-      // 1. Normal service call for Tenant A returns ONLY Tenant A rows via Nest PrismaService.client
-      await tenantContext.run({ schoolId: schoolA }, async () => {
-        const users = await (appPrismaService.client as any).user.findMany();
-        expect(users.length).toBe(1);
-        expect(users[0].id).toBe(userAId);
-        expect(users[0].schoolId).toBe(schoolA);
-      });
-
-      // 2. Normal service call for Tenant B returns ONLY Tenant B rows via Nest PrismaService.client
-      await tenantContext.run({ schoolId: schoolB }, async () => {
-        const users = await (appPrismaService.client as any).user.findMany();
-        expect(users.length).toBe(1);
-        expect(users[0].id).toBe(userBId);
-        expect(users[0].schoolId).toBe(schoolB);
-      });
-
-      // 3. Concurrent requests on pooled client never cross-contaminate (20 parallel requests: 10 Tenant A, 10 Tenant B)
-      const tasks = [
-        ...Array.from({ length: 10 }).map(() =>
-          tenantContext.run({ schoolId: schoolA }, async () => {
-            const users = await (appPrismaService.client as any).user.findMany();
-            expect(users.length).toBe(1);
-            expect(users[0].id).toBe(userAId);
-            return users[0].id;
-          }),
-        ),
-        ...Array.from({ length: 10 }).map(() =>
-          tenantContext.run({ schoolId: schoolB }, async () => {
-            const users = await (appPrismaService.client as any).user.findMany();
-            expect(users.length).toBe(1);
-            expect(users[0].id).toBe(userBId);
-            return users[0].id;
-          }),
-        ),
-      ];
-
-      const results = await Promise.all(tasks);
-      expect(results.filter((id) => id === userAId).length).toBe(10);
-      expect(results.filter((id) => id === userBId).length).toBe(10);
-
+    afterAll(async () => {
       await appPrismaService.$disconnect();
+    });
+
+    // (a) two writes in one caller transaction, then a throw, assert both rolled back
+    it("(a) should rollback two writes in one caller transaction when an error is thrown", async () => {
+      const email1 = `rollback-1-${uuidv7().substring(0, 8)}@test.com`;
+      const email2 = `rollback-2-${uuidv7().substring(0, 8)}@test.com`;
+
+      await expect(
+        appPrismaService.withTenant(schoolA, async (tx) => {
+          await tx.user.create({
+            data: {
+              id: uuidv7(),
+              schoolId: schoolA,
+              email: email1,
+              firstName: "Rollback",
+              lastName: "One",
+            },
+          });
+          await tx.user.create({
+            data: {
+              id: uuidv7(),
+              schoolId: schoolA,
+              email: email2,
+              firstName: "Rollback",
+              lastName: "Two",
+            },
+          });
+          throw new Error("Intentional caller transaction failure");
+        }),
+      ).rejects.toThrow("Intentional caller transaction failure");
+
+      // Verify that neither user was committed
+      await appPrismaService.withTenant(schoolA, async (tx) => {
+        const users = await tx.user.findMany({
+          where: { email: { in: [email1, email2] } },
+        });
+        expect(users.length).toBe(0);
+      });
+    });
+
+    // (b) reads in a caller transaction see only the current tenant
+    it("(b) should scope reads inside a caller transaction strictly to the current tenant", async () => {
+      await appPrismaService.withTenant(schoolA, async (tx) => {
+        const users = await tx.user.findMany();
+        expect(users.length).toBeGreaterThanOrEqual(1);
+        for (const u of users) {
+          expect(u.schoolId).toBe(schoolA);
+        }
+        // Explicitly querying WHERE school_id = schoolB inside Tenant A caller transaction yields 0 rows
+        const crossTenantUsers = await tx.user.findMany({
+          where: { schoolId: schoolB },
+        });
+        expect(crossTenantUsers.length).toBe(0);
+      });
+    });
+
+    // (c) $queryRaw and $executeRaw under the extension are tenant-scoped
+    it("(c) should enforce tenant scoping on $queryRaw and $executeRaw under the client extension", async () => {
+      await tenantContext.run({ schoolId: schoolA }, async () => {
+        const rawUsers: any[] = await appPrismaService.client.$queryRaw`
+          SELECT id, school_id FROM users WHERE id = ${userAId}::uuid;
+        `;
+        expect(rawUsers.length).toBe(1);
+        expect(rawUsers[0].id).toBe(userAId);
+        expect(rawUsers[0].school_id).toBe(schoolA);
+
+        // Update under Tenant A context works for Tenant A row
+        const updateCount = await appPrismaService.client.$executeRaw`
+          UPDATE users SET first_name = 'AliceUpdated' WHERE id = ${userAId}::uuid;
+        `;
+        expect(updateCount).toBe(1);
+
+        // Cross-tenant update under Tenant A context cannot touch Tenant B row
+        const crossUpdateCount = await appPrismaService.client.$executeRaw`
+          UPDATE users SET first_name = 'Hacked' WHERE id = ${userBId}::uuid;
+        `;
+        expect(crossUpdateCount).toBe(0);
+      });
+    });
+
+    // (d) 20 parallel mixed read/write requests for tenants A and B with no leakage
+    it("(d) should handle 20 parallel mixed read and write requests across tenants without leakage", async () => {
+      const operations = Array.from({ length: 20 }).map((_, i) => {
+        const isTenantA = i % 2 === 0;
+        const currentSchoolId = isTenantA ? schoolA : schoolB;
+        const expectedUserId = isTenantA ? userAId : userBId;
+        const isWrite = i % 4 === 0;
+
+        return tenantContext.run({ schoolId: currentSchoolId }, async () => {
+          if (isWrite) {
+            const tempEmail = `mixed-${i}-${uuidv7().substring(0, 8)}@example.com`;
+            const created = await (appPrismaService.client as any).user.create({
+              data: {
+                id: uuidv7(),
+                schoolId: currentSchoolId,
+                email: tempEmail,
+                firstName: "Mixed",
+                lastName: `User${i}`,
+              },
+            });
+            expect(created.schoolId).toBe(currentSchoolId);
+            return { type: "write", schoolId: currentSchoolId };
+          } else {
+            const users = await (appPrismaService.client as any).user.findMany({
+              where: { id: expectedUserId },
+            });
+            expect(users.length).toBe(1);
+            expect(users[0].schoolId).toBe(currentSchoolId);
+            return { type: "read", schoolId: currentSchoolId };
+          }
+        });
+      });
+
+      const results = await Promise.all(operations);
+      expect(results.length).toBe(20);
+      expect(results.filter((r) => r.schoolId === schoolA).length).toBe(10);
+      expect(results.filter((r) => r.schoolId === schoolB).length).toBe(10);
+    });
+
+    // (e) pool exhaustion check: 50 sequential calls with a pool of 5 complete
+    it("(e) should complete 50 sequential calls without pool exhaustion on a pool size of 5", async () => {
+      const poolUrl = `${appDbUrl}${appDbUrl.includes("?") ? "&" : "?"}connection_limit=5`;
+      const poolPrisma = new PrismaService(tenantContext, {
+        datasources: { db: { url: poolUrl } },
+      });
+      await poolPrisma.$connect();
+
+      for (let i = 0; i < 50; i++) {
+        const user = await poolPrisma.withTenant(schoolA, async (tx) => {
+          return tx.user.findFirst({ where: { id: userAId } });
+        });
+        expect(user).toBeDefined();
+        expect(user?.id).toBe(userAId);
+      }
+
+      await poolPrisma.$disconnect();
+    });
+
+    it("should forbid nested $transaction on the tenant-scoped extended client", async () => {
+      await expect((appPrismaService.client as any).$transaction(async () => {})).rejects.toThrow(
+        "Nested $transaction is not permitted on tenant-scoped client",
+      );
     });
   });
 
@@ -452,7 +566,7 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
   describe("Test 14: Migration Deploy from Empty Database", () => {
     const dbUrlBase =
       process.env.DATABASE_URL?.substring(0, process.env.DATABASE_URL.lastIndexOf("/")) ??
-      "postgresql://postgres:postgrespassword@localhost:5432";
+      "postgresql://postgres@localhost:5432";
 
     it("should deploy cleanly from empty database using prisma migrate deploy", async () => {
       await prisma.$executeRawUnsafe(`DROP DATABASE IF EXISTS test_db_empty;`);
@@ -484,7 +598,7 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
   describe("Test 15: Migration Deploy from Current Main Schema Upgrade", () => {
     const dbUrlBase =
       process.env.DATABASE_URL?.substring(0, process.env.DATABASE_URL.lastIndexOf("/")) ??
-      "postgresql://postgres:postgrespassword@localhost:5432";
+      "postgresql://postgres@localhost:5432";
 
     it("should deploy cleanly from current main schema upgrade", async () => {
       await prisma.$executeRawUnsafe(`DROP DATABASE IF EXISTS test_db_from_main;`);
