@@ -55,4 +55,16 @@ Deferred maintenance chores and dependency upgrades scheduled for execution at t
   - Provision a dedicated `platform_audit_logs` table (or external structured audit log sink) owned by the platform schema without tenant RLS constraints.
   - Implement platform audit logging service to capture tenant provisioning and cross-tenant platform events.
 
+### 8. Validate `withTenant` schoolId against Request Tenant Context
+- **Context**: `withTenant` currently validates that `schoolId` is a non-nil valid UUID. In HTTP request lifecycles where a tenant context is already active, callers should be restricted from passing an arbitrary `schoolId` that differs from the active request context unless explicitly marked as platform-initiated (e.g. platform admin impersonation or internal provisioning task).
+- **Checklist Item**: Enhance `withTenant` to verify that when an active request tenant context is present, the target `schoolId` matches the request tenant ID unless an explicit platform bypass flag is provided.
+
+### 9. Strongly Type `PrismaService._tenantClient`
+- **Context**: `PrismaService._tenantClient` is currently typed as `any` because dynamic Prisma Client extension return types (`$extends`) are deeply nested and parameterized.
+- **Checklist Item**: Define a precise return type alias or derive via Prisma client return types to eliminate the `any` type on `_tenantClient`.
+
+### 10. Provision Staging and Production Role Passwords via AWS SSM / Secrets Manager
+- **Context**: Database role passwords for `progresseye_app`, `progresseye_ro`, and `progresseye_owner` are excluded from migrations and repository tracking. CI uses throwaway workflow environment variables.
+- **Checklist Item**: In staging and production environments, retrieve database role credentials from AWS Systems Manager (SSM) Parameter Store or AWS Secrets Manager. Execute `ALTER ROLE ... WITH PASSWORD` after `prisma migrate deploy` completes. Incorporate this step into the owner deployment checklist.
+
 
