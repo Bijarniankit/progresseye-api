@@ -164,6 +164,7 @@ export class AuthService {
     meta: { userAgent?: string; ip: string; origin?: string; referer?: string },
   ) {
     this.validateOrigin(meta.origin, meta.referer);
+    this.abusePreventionService.assertRedisAvailable();
 
     // 1. Split compound token: <schoolId>.<rawToken> (Amendment 2)
     const { schoolId, rawToken } =

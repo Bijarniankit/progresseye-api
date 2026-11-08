@@ -1,4 +1,9 @@
-import { HttpException, HttpStatus, UnauthorizedException } from "@nestjs/common";
+import {
+  HttpException,
+  HttpStatus,
+  ServiceUnavailableException,
+  UnauthorizedException,
+} from "@nestjs/common";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { AppConfigService } from "../../../config/config.service";
 import { RedisService } from "../../../infra/redis/redis.service";
@@ -6,18 +11,40 @@ import { AbusePreventionService } from "./abuse-prevention.service";
 
 describe("AbusePreventionService", () => {
   let service: AbusePreventionService;
+  let mockRedisClient: any;
 
   beforeEach(async () => {
     const mockConfig = {
       get: jest.fn().mockImplementation((key: string) => {
         if (key === "AUTH_LOG_HMAC_SECRET") return "test-log-hmac-secret-min16ch";
         if (key === "AUTH_JWT_SECRET") return "test-jwt-secret-at-least-32-chars-long!";
+        if (key === "AUTH_GRACE_ENC_KEY") return "test-auth-grace-enc-key-min32characterslong!";
         return undefined;
       }),
     };
 
+    const redisStore = new Map<string, string>();
+    mockRedisClient = {
+      status: "ready",
+      get: jest.fn().mockImplementation(async (k: string) => redisStore.get(k) ?? null),
+      setex: jest.fn().mockImplementation(async (k: string, _ttl: number, val: string) => {
+        redisStore.set(k, val);
+        return "OK";
+      }),
+      incr: jest.fn().mockImplementation(async (k: string) => {
+        const current = Number.parseInt(redisStore.get(k) || "0", 10) + 1;
+        redisStore.set(k, String(current));
+        return current;
+      }),
+      expire: jest.fn().mockResolvedValue(1),
+      del: jest.fn().mockImplementation(async (k: string) => {
+        redisStore.delete(k);
+        return 1;
+      }),
+    };
+
     const mockRedis = {
-      getClient: jest.fn().mockReturnValue(null), // Uses in-memory fallback for unit tests
+      getClient: jest.fn().mockReturnValue(mockRedisClient),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -150,6 +177,31 @@ describe("AbusePreventionService", () => {
       expect(cached).toBeDefined();
       expect(cached?.accessToken).toBe("new-access-token");
       expect(cached?.compoundRefreshToken).toBe("school.new-refresh-token");
+    });
+
+    it("should decrypt payload successfully and return null when decrypted with wrong key", () => {
+      const payload = { token: "secret-token", userId: "user-123" };
+      const encrypted = service.encryptGracePayload(payload);
+      expect(encrypted).toContain(":");
+
+      // Decrypt with correct key
+      const decrypted = service.decryptGracePayload(encrypted);
+      expect(decrypted).toEqual(payload);
+
+      // Decrypt with wrong key returns null
+      const wrongKey = "completely-wrong-key-min32characterslong!";
+      const failedDecrypt = service.decryptGracePayload(encrypted, wrongKey);
+      expect(failedDecrypt).toBeNull();
+    });
+
+    it("should throw ServiceUnavailableException (503) when Redis is unavailable on cache/get", async () => {
+      mockRedisClient.status = "connecting"; // Redis not ready
+
+      await expect(service.cacheSuccessorToken("hash1", { token: "val" })).rejects.toThrow(
+        ServiceUnavailableException,
+      );
+
+      await expect(service.getSuccessorToken("hash1")).rejects.toThrow(ServiceUnavailableException);
     });
   });
 });

@@ -50,6 +50,37 @@ describe("PasswordService", () => {
       const res = await service.verifyDummy("AnyPasswordAttempt");
       expect(res).toBe(false);
     });
+
+    it("should exhibit comparable latency between verify and verifyDummy (coarse timing test)", async () => {
+      const password = "TargetPassword2026!";
+      const hash = await service.hash(password);
+
+      // Measure 5 samples of verify with wrong password
+      const wrongPassTimes: number[] = [];
+      for (let i = 0; i < 5; i++) {
+        const start = performance.now();
+        await service.verify(hash, "IncorrectPasswordGuess!");
+        wrongPassTimes.push(performance.now() - start);
+      }
+
+      // Measure 5 samples of verifyDummy (unknown user / unknown school path)
+      const dummyTimes: number[] = [];
+      for (let i = 0; i < 5; i++) {
+        const start = performance.now();
+        await service.verifyDummy("IncorrectPasswordGuess!");
+        dummyTimes.push(performance.now() - start);
+      }
+
+      const avgWrong = wrongPassTimes.reduce((a, b) => a + b, 0) / wrongPassTimes.length;
+      const avgDummy = dummyTimes.reduce((a, b) => a + b, 0) / dummyTimes.length;
+
+      // Loose tolerance factor (within 4x) to accommodate CI virtualization and GC pauses
+      expect(avgDummy).toBeGreaterThan(0);
+      expect(avgWrong).toBeGreaterThan(0);
+      const ratio = avgDummy / avgWrong;
+      expect(ratio).toBeGreaterThan(0.25);
+      expect(ratio).toBeLessThan(4.0);
+    });
   });
 
   describe("NIST SP 800-63B Password Policy", () => {

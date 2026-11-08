@@ -44,6 +44,7 @@ export const baseEnvSchema = z.object({
   AUTH_JWT_SECRET: z.string().min(32).default("dev-jwt-secret-at-least-32-characters-long-pe"),
   AUTH_JWT_KID: z.string().default("pe-key-2026-v1"),
   AUTH_LOG_HMAC_SECRET: z.string().min(16).default("dev-auth-log-hmac-secret-min16ch"),
+  AUTH_GRACE_ENC_KEY: z.string().min(32).default("dev-insecure-grace-key-min32charslong!"),
   AUTH_BREACHED_PASSWORD_CHECK_ENABLED: z.enum(["true", "false"]).default("false"),
 
   // Legacy auth secrets (deprecated in favor of AUTH_JWT_SECRET)
@@ -128,6 +129,27 @@ export const envSchema = baseEnvSchema.superRefine((data, ctx) => {
         code: z.ZodIssueCode.custom,
         path: ["AUTH_LOG_HMAC_SECRET"],
         message: "AUTH_LOG_HMAC_SECRET cannot use default development values in production.",
+      });
+    }
+
+    // Refuse weak or default AUTH_GRACE_ENC_KEY in production
+    const weakGracePatterns = [
+      "dev-insecure-grace-key",
+      "default",
+      "secret",
+      "progress-eye-dev",
+      "123456",
+    ];
+    if (
+      !data.AUTH_GRACE_ENC_KEY ||
+      data.AUTH_GRACE_ENC_KEY.length < 32 ||
+      weakGracePatterns.some((pattern) => data.AUTH_GRACE_ENC_KEY.toLowerCase().includes(pattern))
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["AUTH_GRACE_ENC_KEY"],
+        message:
+          "AUTH_GRACE_ENC_KEY must be at least 32 characters and cannot use default/weak patterns in production.",
       });
     }
   }

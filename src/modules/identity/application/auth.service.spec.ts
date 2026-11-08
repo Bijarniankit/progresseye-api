@@ -1,4 +1,9 @@
-import { ForbiddenException, NotFoundException, UnauthorizedException } from "@nestjs/common";
+import {
+  ForbiddenException,
+  NotFoundException,
+  ServiceUnavailableException,
+  UnauthorizedException,
+} from "@nestjs/common";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { TenantContextService } from "../../../common/request-context/tenant-context.service";
 import { AppConfigService } from "../../../config/config.service";
@@ -74,6 +79,7 @@ describe("AuthService", () => {
       recordSuccessfulLogin: jest.fn().mockResolvedValue(undefined),
       cacheSuccessorToken: jest.fn().mockResolvedValue(undefined),
       getSuccessorToken: jest.fn().mockResolvedValue(null),
+      assertRedisAvailable: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -205,6 +211,18 @@ describe("AuthService", () => {
   });
 
   describe("refresh() with Grace Window & Reuse Detection", () => {
+    it("should throw ServiceUnavailableException (503) when Redis cache is unavailable", async () => {
+      mockAbuseService.assertRedisAvailable?.mockImplementation(() => {
+        throw new ServiceUnavailableException(
+          "Authentication service cache is currently unavailable. Please retry shortly.",
+        );
+      });
+
+      await expect(service.refresh(`${schoolId}.token`, { ip: "127.0.0.1" })).rejects.toThrow(
+        ServiceUnavailableException,
+      );
+    });
+
     it("should return cached successor token if duplicate request arrives within 10s grace window (Amendment 4)", async () => {
       mockAbuseService.getSuccessorToken?.mockResolvedValue({
         accessToken: "cached-access-token",

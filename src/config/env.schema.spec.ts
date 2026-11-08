@@ -63,6 +63,7 @@ describe("Environment Configuration Validation", () => {
       DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/prod_db",
       AUTH_JWT_SECRET: "prod-secure-random-32char-token-signing-key-sample",
       AUTH_LOG_HMAC_SECRET: "prod-secure-hmac-salt-key-sample",
+      AUTH_GRACE_ENC_KEY: "prod-secure-random-32char-grace-encryption-key-sample",
     };
 
     it("should reject startup in production if TURNSTILE_ENABLED is not 'true'", () => {
@@ -146,6 +147,30 @@ describe("Environment Configuration Validation", () => {
           AUTH_LOG_HMAC_SECRET: "dev-auth-log-hmac-secret-min16ch",
         }),
       ).toThrow(/AUTH_LOG_HMAC_SECRET cannot use default development values in production/);
+    });
+
+    it("should reject startup in production if AUTH_GRACE_ENC_KEY is weak or default", () => {
+      expect(() =>
+        validateEnv({
+          ...baseProdConfig,
+          TURNSTILE_ENABLED: "true",
+          TURNSTILE_SECRET_KEY: "0x4AAAAAAAxRealCloudflareSecretKeyExample",
+          AUTH_GRACE_ENC_KEY: "dev-insecure-grace-key-min32charslong!",
+        }),
+      ).toThrow(
+        /AUTH_GRACE_ENC_KEY must be at least 32 characters and cannot use default\/weak patterns in production/,
+      );
+
+      expect(() =>
+        validateEnv({
+          ...baseProdConfig,
+          TURNSTILE_ENABLED: "true",
+          TURNSTILE_SECRET_KEY: "0x4AAAAAAAxRealCloudflareSecretKeyExample",
+          AUTH_GRACE_ENC_KEY: "too-short",
+        }),
+      ).toThrow(
+        /AUTH_GRACE_ENC_KEY must be at least 32 characters and cannot use default\/weak patterns in production/,
+      );
     });
   });
 

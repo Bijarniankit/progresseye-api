@@ -18,7 +18,7 @@ Key architectural requirements:
 We adopt **Option A: Slug-first login**. Users authenticate via `schoolSlug`, `email`, and `password`:
 - The school slug resolves the school tenant metadata (`schoolId`).
 - The login transaction runs under `withTenant(schoolId)` to query `users` under RLS.
-- Dummy Argon2 verification executes on unknown school or user lookups to maintain timing-attack resistance.
+- Dummy Argon2 verification (`passwordService.verifyDummy`) executes on unknown school or user lookups to maintain timing-attack resistance. Note on timing equality: absolute millisecond equality is not strictly asserted in automated test suites due to CI virtualization scheduling jitter, host CPU throttling, and GC pauses; however, the execution path is mathematically guaranteed to run the exact same Argon2id cost parameters (`timeCost: 2/3`, `memoryCost: 4096/65536`, `parallelism: 1`) as a real user lookup.
 
 ### 2. Compound Refresh Tokens `<schoolId>.<refreshToken>`
 Because refresh and logout requests do not carry a Bearer JWT, the database cannot know which tenant's RLS partition to query without a tenant context:
@@ -29,7 +29,8 @@ Because refresh and logout requests do not carry a Bearer JWT, the database cann
 
 ### 3. Token Rotation, Grace Window, and Family Revocation
 - **One-time Use**: Refresh tokens are rotated on every use within an atomic database transaction.
-- **Encrypted Multi-Instance Grace Window**: A 10-second grace window handles concurrent mobile network requests and retries. Duplicate requests within 10 seconds return the identical successor token. The raw successor refresh token is stored in Redis (with 10-second TTL) encrypted at rest using AES-256-GCM (key derived from `AUTH_JWT_SECRET`). Across all API cluster instances, duplicate requests decrypt and retrieve the cached successor, avoiding raw token exposure in cache storage while supporting horizontal scaling.
+- **Dedicated Key Encryption for Grace Window**: A 10-second grace window handles concurrent mobile network requests and retries. Duplicate requests within 10 seconds return the identical successor token. The raw successor refresh token is stored in Redis (with 10-second TTL) encrypted at rest using AES-256-GCM using a dedicated encryption key (`AUTH_GRACE_ENC_KEY`, minimum 32 bytes, distinct from `AUTH_JWT_SECRET`). If an invalid key is supplied, decryption fails closed and returns `null`.
+- **Redis-Unavailable Fail-Closed Design (HTTP 503)**: In a horizontally-scaled multi-instance cluster, in-memory fallbacks create a split-brain condition where a duplicate refresh landing on a different node looks like an uncoordinated token replay, erroneously triggering whole-family revocation. Therefore, if the Redis distributed cache is unavailable or offline, the refresh endpoint immediately returns `503 Service Unavailable` (`ServiceUnavailableException`), refusing to rotate tokens until cache synchronization is restored.
 - **Family Revocation**: Presentation of a revoked token outside the grace window indicates a token replay or theft. The entire session tree (`familyId`) is revoked immediately across all devices.
 - **Lifetimes**: Access token = 15 minutes; Refresh token = 30 days sliding, capped at 90 days absolute from initial family creation.
 
@@ -58,6 +59,10 @@ Because refresh and logout requests do not carry a Bearer JWT, the database cann
 - Audit logs record security events using HMAC-SHA256 (`AUTH_LOG_HMAC_SECRET`) for emails and IP addresses.
 - Application-level audit records are inserted into tenant `audit_logs` under RLS.
 - Platform-level security telemetry (e.g. IP-level rate-limiting blocks) is routed to Pino structured logs pending the implementation of `platform_audit_logs`.
+
+### 7. Dependency Selection and Ecosystem Versions
+- `@fastify/cookie` version `10.0.1` vs `11.0.2`: Selected for compatibility with Fastify 5 plugin registration in NestJS FastifyAdapter. Note: Version divergence rationale is `UNVERIFIED` (derived from training memory rather than live npm registry comparison against 11.0.2); compatibility will be validated during staging deployment (`PLACEHOLDERS.md`).
+- `zxcvbn` version `4.4.2`: Selected for NIST SP 800-63B password strength entropy estimation. Note: Version selection and comparison against modern TypeScript ports (e.g. `@zxcvbn-ts/core`) is `UNVERIFIED` (derived from training memory); tracked for formal benchmark/audit in Phase 12b (`PLACEHOLDERS.md`).
 
 ## Consequences
 - Clean tenant isolation without requiring `BYPASSRLS` privileges for the application role.

@@ -4,6 +4,7 @@ import {
   HttpStatus,
   Injectable,
   Logger,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from "@nestjs/common";
 import { hmacHash } from "../../../common/utils/sanitization";
@@ -123,16 +124,38 @@ export class AbusePreventionService {
     await this.deleteKey(accountKey);
   }
 
-  private getEncryptionKey(): Buffer {
-    const secret =
-      this.config.get("AUTH_JWT_SECRET") ||
-      this.config.get("AUTH_LOG_HMAC_SECRET") ||
-      "default-fallback-secret-at-least-32-chars-long";
-    return createHash("sha256").update(secret).digest();
+  /**
+   * Asserts that the distributed Redis cache is connected and ready.
+   * Multi-instance safe: prevents split-brain session family revocation across API instances.
+   * Throws 503 Service Unavailable if Redis is disconnected.
+   */
+  assertRedisAvailable(): void {
+    const client = this.redisService.getClient();
+    if (client?.status !== "ready") {
+      this.logger.error({
+        event: "platform_audit",
+        action: "AUTH.CACHE_UNAVAILABLE",
+        message:
+          "Redis distributed cache is unavailable; halting refresh rotation to prevent multi-instance family revocation.",
+      });
+      throw new ServiceUnavailableException(
+        "Authentication service cache is currently unavailable. Please retry shortly.",
+      );
+    }
   }
 
-  private encryptGracePayload(data: Record<string, unknown>): string {
-    const key = this.getEncryptionKey();
+  getEncryptionKey(overrideKey?: string): Buffer {
+    const keyString = overrideKey ?? this.config.get("AUTH_GRACE_ENC_KEY");
+    if (!keyString || keyString.length < 32) {
+      throw new ServiceUnavailableException(
+        "AUTH_GRACE_ENC_KEY is not configured or does not meet minimum 32-character requirement",
+      );
+    }
+    return createHash("sha256").update(keyString).digest();
+  }
+
+  encryptGracePayload(data: Record<string, unknown>, overrideKey?: string): string {
+    const key = this.getEncryptionKey(overrideKey);
     const iv = randomBytes(12);
     const cipher = createCipheriv("aes-256-gcm", key, iv);
     const encrypted = Buffer.concat([cipher.update(JSON.stringify(data), "utf8"), cipher.final()]);
@@ -140,12 +163,12 @@ export class AbusePreventionService {
     return `${iv.toString("hex")}:${tag.toString("hex")}:${encrypted.toString("hex")}`;
   }
 
-  private decryptGracePayload(payload: string): Record<string, unknown> | null {
+  decryptGracePayload(payload: string, overrideKey?: string): Record<string, unknown> | null {
     try {
       const parts = payload.split(":");
       if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) return null;
       const [ivHex, tagHex, cipherHex] = parts as [string, string, string];
-      const key = this.getEncryptionKey();
+      const key = this.getEncryptionKey(overrideKey);
       const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(ivHex, "hex"));
       decipher.setAuthTag(Buffer.from(tagHex, "hex"));
       const decrypted = Buffer.concat([
@@ -161,53 +184,29 @@ export class AbusePreventionService {
   /**
    * Stores an encrypted successor token pair during refresh for the 10-second grace window.
    * Multi-instance safe across API nodes via Redis, encrypted at rest with AES-256-GCM.
+   * If Redis is unavailable, throws 503 Service Unavailable to prevent split-brain family revocation.
    */
   async cacheSuccessorToken(
     tokenHash: string,
     data: Record<string, unknown>,
     ttlSeconds = 10,
   ): Promise<void> {
+    this.assertRedisAvailable();
     const key = `auth:grace:${tokenHash}`;
     const encrypted = this.encryptGracePayload(data);
-    const client = this.redisService.getClient();
-    if (client && client.status === "ready") {
-      try {
-        await client.setex(key, ttlSeconds, encrypted);
-        return;
-      } catch {
-        // Fall back to memory cache
-      }
-    }
-    this.memoryCache.set(key, {
-      count: 1,
-      expiresAt: Date.now() + ttlSeconds * 1000,
-      encryptedPayload: encrypted,
-    } as any);
+    const client = this.redisService.getClient()!;
+    await client.setex(key, ttlSeconds, encrypted);
   }
 
   /**
    * Retrieves and decrypts the cached successor token pair if within the 10-second grace window.
+   * If Redis is unavailable, throws 503 Service Unavailable.
    */
   async getSuccessorToken(tokenHash: string): Promise<Record<string, unknown> | null> {
+    this.assertRedisAvailable();
     const key = `auth:grace:${tokenHash}`;
-    const client = this.redisService.getClient();
-    let rawEncrypted: string | null = null;
-    if (client && client.status === "ready") {
-      try {
-        rawEncrypted = await client.get(key);
-      } catch {
-        // Fall back to memory cache
-      }
-    }
-    if (!rawEncrypted) {
-      const mem = this.memoryCache.get(key);
-      if (!mem) return null;
-      if (Date.now() > mem.expiresAt) {
-        this.memoryCache.delete(key);
-        return null;
-      }
-      rawEncrypted = (mem as any).encryptedPayload || null;
-    }
+    const client = this.redisService.getClient()!;
+    const rawEncrypted = await client.get(key);
     if (!rawEncrypted) return null;
     return this.decryptGracePayload(rawEncrypted);
   }

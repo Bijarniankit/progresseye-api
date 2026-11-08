@@ -132,7 +132,7 @@ jobs:
           DIRECT_URL: postgresql://postgres@localhost:5432/test_db
         run: |
           pnpm openapi:generate
-          git diff --exit-code openapi/
+          git diff --exit-code openapi/ docs/openapi.json
 
       - name: Docker Build Test (API)
         run: docker build -t progresseye-api:test .

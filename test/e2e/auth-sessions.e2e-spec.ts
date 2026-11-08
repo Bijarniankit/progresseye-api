@@ -8,6 +8,7 @@ import request from "supertest";
 import { uuidv7 } from "uuidv7";
 import { AppModule } from "../../src/app.module";
 import { PrismaService } from "../../src/infra/prisma/prisma.service";
+import { RedisService } from "../../src/infra/redis/redis.service";
 import { SessionRepository } from "../../src/modules/identity/infra/session.repository";
 
 jest.setTimeout(45000);
@@ -88,6 +89,28 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
           (${userBId}::uuid, ${schoolBId}::uuid, 'bob@oakridge.com', ${passwordHash}, 'Bob', 'Jones', true);
       `;
     } else {
+      const redisService = moduleFixture.get<RedisService>(RedisService);
+      const redisStore = new Map<string, string>();
+      const mockClient = {
+        status: "ready",
+        get: jest.fn().mockImplementation(async (k: string) => redisStore.get(k) ?? null),
+        setex: jest.fn().mockImplementation(async (k: string, _ttl: number, val: string) => {
+          redisStore.set(k, val);
+          return "OK";
+        }),
+        incr: jest.fn().mockImplementation(async (k: string) => {
+          const current = Number.parseInt(redisStore.get(k) || "0", 10) + 1;
+          redisStore.set(k, String(current));
+          return current;
+        }),
+        expire: jest.fn().mockResolvedValue(1),
+        del: jest.fn().mockImplementation(async (k: string) => {
+          redisStore.delete(k);
+          return 1;
+        }),
+      };
+      jest.spyOn(redisService, "getClient").mockReturnValue(mockClient as any);
+
       const mockSessions: any[] = [];
       const sessionRepo = moduleFixture.get<SessionRepository>(SessionRepository);
 
@@ -494,15 +517,12 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
 
       const t2 = resRotated.body.refreshToken as string;
 
-      // Manually invalidate the grace window cache in Redis/memory to simulate post-grace-period replay
+      // Manually invalidate the grace window cache in Redis to simulate post-grace-period replay
       const rawToken1 = t1.slice(t1.indexOf(".") + 1);
       const crypto = require("node:crypto");
       const hash1 = crypto.createHash("sha256").update(rawToken1).digest("hex");
-      const abuseService = app.get(
-        require("../../src/modules/identity/domain/abuse-prevention.service")
-          .AbusePreventionService,
-      );
-      (abuseService as any).memoryCache.delete(`auth:grace:${hash1}`);
+      const redisService = app.get(RedisService);
+      await redisService.getClient()?.del(`auth:grace:${hash1}`);
 
       // 3. Replay revoked token t1 outside grace window
       await request(app.getHttpServer())
@@ -796,6 +816,23 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
         timeCost: 2,
         parallelism: 1,
       });
+    });
+  });
+
+  describe("14. Redis Distributed Cache Failure (HTTP 503)", () => {
+    it("should return HTTP 503 Service Unavailable on refresh when Redis distributed cache is down", async () => {
+      const redisService = app.get(RedisService);
+      const originalGetClient = redisService.getClient;
+      jest.spyOn(redisService, "getClient").mockReturnValue({ status: "connecting" } as any);
+
+      try {
+        await request(app.getHttpServer())
+          .post("/api/v1/auth/refresh")
+          .send({ refreshToken: "schoolA.some-raw-token" })
+          .expect(503);
+      } finally {
+        jest.spyOn(redisService, "getClient").mockImplementation(originalGetClient);
+      }
     });
   });
 });
