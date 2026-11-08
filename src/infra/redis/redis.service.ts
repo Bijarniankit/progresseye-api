@@ -8,7 +8,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
   constructor(private readonly config: AppConfigService) {}
 
-  onModuleInit(): void {
+  async onModuleInit(): Promise<void> {
     const host = this.config.get("REDIS_HOST");
     const port = this.config.get("REDIS_PORT");
     const password = this.config.get("REDIS_PASSWORD");
@@ -24,6 +24,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
     // Quietly handle connection errors
     this.client.on("error", () => {});
+    await this.client.connect().catch(() => {});
   }
 
   async onModuleDestroy(): Promise<void> {

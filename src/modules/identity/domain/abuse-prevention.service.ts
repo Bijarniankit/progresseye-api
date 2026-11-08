@@ -129,9 +129,23 @@ export class AbusePreventionService {
    * Multi-instance safe: prevents split-brain session family revocation across API instances.
    * Throws 503 Service Unavailable if Redis is disconnected.
    */
-  assertRedisAvailable(): void {
+  async assertRedisAvailable(): Promise<void> {
     const client = this.redisService.getClient();
-    if (client?.status !== "ready") {
+    if (!client) {
+      this.logger.error({
+        event: "platform_audit",
+        action: "AUTH.CACHE_UNAVAILABLE",
+        message:
+          "Redis distributed cache is unavailable; halting refresh rotation to prevent multi-instance family revocation.",
+      });
+      throw new ServiceUnavailableException(
+        "Authentication service cache is currently unavailable. Please retry shortly.",
+      );
+    }
+    if (client.status === "wait") {
+      await client.connect().catch(() => {});
+    }
+    if (client.status !== "ready") {
       this.logger.error({
         event: "platform_audit",
         action: "AUTH.CACHE_UNAVAILABLE",
@@ -191,7 +205,7 @@ export class AbusePreventionService {
     data: Record<string, unknown>,
     ttlSeconds = 10,
   ): Promise<void> {
-    this.assertRedisAvailable();
+    await this.assertRedisAvailable();
     const key = `auth:grace:${tokenHash}`;
     const encrypted = this.encryptGracePayload(data);
     const client = this.redisService.getClient()!;
@@ -203,7 +217,7 @@ export class AbusePreventionService {
    * If Redis is unavailable, throws 503 Service Unavailable.
    */
   async getSuccessorToken(tokenHash: string): Promise<Record<string, unknown> | null> {
-    this.assertRedisAvailable();
+    await this.assertRedisAvailable();
     const key = `auth:grace:${tokenHash}`;
     const client = this.redisService.getClient()!;
     const rawEncrypted = await client.get(key);
