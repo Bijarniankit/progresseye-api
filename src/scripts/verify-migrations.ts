@@ -150,6 +150,15 @@ async function main() {
   }
   console.log("Verified pre-existing data preserved after Phase 11 upgrade.");
 
+  const sessionCols: any[] = await upgradePrisma.$queryRaw`
+    SELECT column_name FROM information_schema.columns 
+    WHERE table_name = 'sessions' AND column_name = 'family_id';
+  `;
+  if (sessionCols.length !== 1) {
+    throw new Error("Phase 12a family_id column not found on sessions table!");
+  }
+  console.log("Verified Phase 12a session family column deployed successfully.");
+
   await upgradePrisma.$disconnect();
   await adminPrisma.$disconnect();
 

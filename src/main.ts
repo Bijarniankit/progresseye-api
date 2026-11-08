@@ -1,3 +1,4 @@
+import fastifyCookie from "@fastify/cookie";
 import helmet from "@fastify/helmet";
 import { NestFactory } from "@nestjs/core";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
@@ -52,6 +53,9 @@ async function bootstrap() {
     getHelmetConfig(config.get("APP_ENV")),
   );
 
+  // Cookie parsing for HTTP-only refresh tokens (Phase 12)
+  await app.register(fastifyCookie as unknown as Parameters<typeof app.register>[0]);
+
   // Security: Strict CORS
   app.enableCors({
     origin: config.get("CORS_ORIGIN"),
@@ -62,6 +66,10 @@ async function bootstrap() {
       "Authorization",
       "x-request-id",
       "x-school-id",
+      "X-School-Slug",
+      "x-school-slug",
+      "X-Client-Type",
+      "x-client-type",
       "Idempotency-Key",
       "idempotency-key",
     ],

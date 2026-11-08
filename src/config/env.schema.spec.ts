@@ -61,6 +61,8 @@ describe("Environment Configuration Validation", () => {
       APP_ENV: "production",
       NODE_ENV: "production",
       DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/prod_db",
+      AUTH_JWT_SECRET: "prod-secure-random-32char-token-signing-key-sample",
+      AUTH_LOG_HMAC_SECRET: "prod-secure-hmac-salt-key-sample",
     };
 
     it("should reject startup in production if TURNSTILE_ENABLED is not 'true'", () => {
@@ -109,6 +111,41 @@ describe("Environment Configuration Validation", () => {
       expect(env.APP_ENV).toBe("production");
       expect(env.TURNSTILE_ENABLED).toBe("true");
       expect(env.TURNSTILE_SECRET_KEY).toBe("0x4AAAAAAAxRealCloudflareSecretKeyExample");
+    });
+
+    it("should reject startup in production if AUTH_JWT_SECRET is weak or default", () => {
+      expect(() =>
+        validateEnv({
+          ...baseProdConfig,
+          TURNSTILE_ENABLED: "true",
+          TURNSTILE_SECRET_KEY: "0x4AAAAAAAxRealCloudflareSecretKeyExample",
+          AUTH_JWT_SECRET: "dev-jwt-secret-at-least-32-characters-long-pe",
+        }),
+      ).toThrow(
+        /AUTH_JWT_SECRET must be at least 32 characters and cannot use default\/weak patterns in production/,
+      );
+
+      expect(() =>
+        validateEnv({
+          ...baseProdConfig,
+          TURNSTILE_ENABLED: "true",
+          TURNSTILE_SECRET_KEY: "0x4AAAAAAAxRealCloudflareSecretKeyExample",
+          AUTH_JWT_SECRET: "too-short",
+        }),
+      ).toThrow(
+        /AUTH_JWT_SECRET must be at least 32 characters and cannot use default\/weak patterns in production/,
+      );
+    });
+
+    it("should reject startup in production if AUTH_LOG_HMAC_SECRET is default", () => {
+      expect(() =>
+        validateEnv({
+          ...baseProdConfig,
+          TURNSTILE_ENABLED: "true",
+          TURNSTILE_SECRET_KEY: "0x4AAAAAAAxRealCloudflareSecretKeyExample",
+          AUTH_LOG_HMAC_SECRET: "dev-auth-log-hmac-secret-min16ch",
+        }),
+      ).toThrow(/AUTH_LOG_HMAC_SECRET cannot use default development values in production/);
     });
   });
 

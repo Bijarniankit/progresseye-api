@@ -67,4 +67,9 @@ Deferred maintenance chores and dependency upgrades scheduled for execution at t
 - **Context**: Database role passwords for `progresseye_app`, `progresseye_ro`, and `progresseye_owner` are excluded from migrations and repository tracking. CI uses throwaway workflow environment variables.
 - **Checklist Item**: In staging and production environments, retrieve database role credentials from AWS Systems Manager (SSM) Parameter Store or AWS Secrets Manager. Execute `ALTER ROLE ... WITH PASSWORD` after `prisma migrate deploy` completes. Incorporate this step into the owner deployment checklist.
 
+### 11. Durable Database Sink for Platform-Level IP-Block and Security Events
+- **Context**: In Phase 12a, IP-level rate-limiting and anti-abuse blocks are emitted to Pino structured logs using HMAC-pseudonymized IP hashes. Because `audit_logs` requires a non-null `school_id` and is strictly partitioned by tenant under PostgreSQL RLS, IP-block events currently have no durable database record.
+- **Checklist Item**: Once `platform_audit_logs` (Item 7) is provisioned, route global IP-block events, anonymous brute-force telemetry, and cross-tenant security alerts into `platform_audit_logs` alongside Pino structured logs.
+
+
 
