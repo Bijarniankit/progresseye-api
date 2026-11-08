@@ -10,17 +10,256 @@ datasource db {
   extensions = [pgcrypto, pg_trgm, btree_gist, citext]
 }
 
-// Tenancy
-model School {
-  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  slug      String   @unique
+// ---------------------------------------------------------
+// 1. Multi-Tenant Organization (Optional Parent of Schools)
+// ---------------------------------------------------------
+model Organization {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name      String
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  slug      String
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  schools School[]
+
+  @@map("organizations")
+}
+
+// ---------------------------------------------------------
+// 2. Tenant Root: School
+// ---------------------------------------------------------
+model School {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String?   @map("organization_id") @db.Uuid
+  slug           String
+  name           String
+  isActive       Boolean   @default(true) @map("is_active")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  deletedAt      DateTime? @map("deleted_at")
+
+  organization    Organization?    @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  academicYears   AcademicYear[]
+  users           User[]
+  sessions        Session[]
+  roles           Role[]
+  rolePermissions RolePermission[]
+  userRoles       UserRole[]
+  auditLogs       AuditLog[]
+  outboxEvents    OutboxEvent[]
+  counters        Counter[]
 
   @@map("schools")
 }
 
+// ---------------------------------------------------------
+// 3. Academic Years (Tenant Scoped)
+// ---------------------------------------------------------
+model AcademicYear {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId  String    @map("school_id") @db.Uuid
+  name      String
+  startDate DateTime  @map("start_date") @db.Date
+  endDate   DateTime  @map("end_date") @db.Date
+  isCurrent Boolean   @default(false) @map("is_current")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  school   School    @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  counters Counter[]
+
+  @@index([schoolId])
+  @@map("academic_years")
+}
+
+// ---------------------------------------------------------
+// 4. Users (Tenant Scoped)
+// ---------------------------------------------------------
+model User {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId     String    @map("school_id") @db.Uuid
+  email        String    @db.Citext
+  phone        String?
+  passwordHash String?   @map("password_hash")
+  firstName    String    @map("first_name")
+  lastName     String    @map("last_name")
+  isActive     Boolean   @default(true) @map("is_active")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  deletedAt    DateTime? @map("deleted_at")
+
+  school    School     @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  sessions  Session[]
+  userRoles UserRole[]
+  auditLogs AuditLog[]
+
+  @@index([schoolId])
+  @@map("users")
+}
+
+// ---------------------------------------------------------
+// 5. Sessions (Tenant Scoped, Immutable/Revocable)
+// ---------------------------------------------------------
+model Session {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId   String    @map("school_id") @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  tokenHash  String    @unique @map("token_hash")
+  userAgent  String?   @map("user_agent")
+  ipAddress  String?   @map("ip_address")
+  expiresAt  DateTime  @map("expires_at")
+  revokedAt  DateTime? @map("revoked_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId, userId])
+  @@map("sessions")
+}
+
+// ---------------------------------------------------------
+// 6. Roles (Tenant Scoped)
+// ---------------------------------------------------------
+model Role {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId    String    @map("school_id") @db.Uuid
+  name        String
+  slug        String
+  description String?
+  isSystem    Boolean   @default(false) @map("is_system")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  school          School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  rolePermissions RolePermission[]
+  userRoles       UserRole[]
+
+  @@index([schoolId])
+  @@map("roles")
+}
+
+// ---------------------------------------------------------
+// 7. Permissions (Global System Catalog)
+// ---------------------------------------------------------
+model Permission {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code        String   @unique
+  module      String
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+// ---------------------------------------------------------
+// 8. Role Permissions (Tenant Scoped Junction)
+// ---------------------------------------------------------
+model RolePermission {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId     String   @map("school_id") @db.Uuid
+  roleId       String   @map("role_id") @db.Uuid
+  permissionId String   @map("permission_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  school     School     @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([schoolId, roleId, permissionId])
+  @@map("role_permissions")
+}
+
+// ---------------------------------------------------------
+// 9. User Roles (Tenant Scoped Junction)
+// ---------------------------------------------------------
+model UserRole {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId  String   @map("school_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  roleId    String   @map("role_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([schoolId, userId, roleId])
+  @@map("user_roles")
+}
+
+// ---------------------------------------------------------
+// 10. Audit Logs (Tenant Scoped, Partitioned by Month)
+// ---------------------------------------------------------
+model AuditLog {
+  id         String   @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId   String   @map("school_id") @db.Uuid
+  userId     String?  @map("user_id") @db.Uuid
+  action     String
+  resource   String
+  resourceId String?  @map("resource_id")
+  ipAddress  String?  @map("ip_address")
+  userAgent  String?  @map("user_agent")
+  payload    Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  user   User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@id([id, createdAt])
+  @@index([schoolId, createdAt])
+  @@map("audit_logs")
+}
+
+// ---------------------------------------------------------
+// 11. Outbox Events (Tenant Scoped, State Machine)
+// ---------------------------------------------------------
+model OutboxEvent {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId    String    @map("school_id") @db.Uuid
+  eventType   String    @map("event_type")
+  payload     Json
+  status      String    @default("PENDING")
+  retryCount  Int       @default(0) @map("retry_count")
+  processedAt DateTime? @map("processed_at")
+  error       String?
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId, status])
+  @@map("outbox_events")
+}
+
+// ---------------------------------------------------------
+// 12. Counters (Tenant Scoped, High Concurrency Row Locks)
+// ---------------------------------------------------------
+model Counter {
+  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String        @map("school_id") @db.Uuid
+  academicYearId String?       @map("academic_year_id") @db.Uuid
+  sequenceName   String        @map("sequence_name")
+  currentValue   BigInt        @default(0) @map("current_value")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+
+  school       School        @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  academicYear AcademicYear? @relation(fields: [academicYearId], references: [id], onDelete: SetNull)
+
+  @@index([schoolId, sequenceName])
+  @@map("counters")
+}
+
+// ---------------------------------------------------------
+// Platform / Marketing Leads (Outside RLS, No school_id)
+// ---------------------------------------------------------
 enum LeadType {
   CONTACT
   DEMO
@@ -37,7 +276,6 @@ enum LeadStatus {
   @@map("lead_statuses")
 }
 
-// Platform / Marketing Leads (Outside RLS, No school_id)
 model Lead {
   id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   type           LeadType

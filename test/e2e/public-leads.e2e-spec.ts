@@ -22,7 +22,8 @@ describe("Public Leads API E2E Tests", () => {
   const testLogBuffer: string[] = [];
 
   beforeAll(async () => {
-    process.env.DATABASE_URL = "postgresql://postgres:postgrespassword@localhost:5432/test_db";
+    process.env.DATABASE_URL =
+      process.env.DATABASE_URL ?? "postgresql://postgres@localhost:5432/test_db";
     process.env.THROTTLE_LIMIT = "100";
     process.env.THROTTLE_TTL = "60000";
 
