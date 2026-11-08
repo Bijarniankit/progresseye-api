@@ -70,7 +70,10 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
     if (dbAvailable) {
       const redisService = moduleFixture.get<RedisService>(RedisService);
       await redisService.ping();
-      await redisService.getClient()?.flushall().catch(() => {});
+      await redisService
+        .getClient()
+        ?.flushall()
+        .catch(() => {});
 
       // Clean up test tables
       await prisma.$executeRawUnsafe(
