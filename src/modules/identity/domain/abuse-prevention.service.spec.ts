@@ -11,6 +11,7 @@ describe("AbusePreventionService", () => {
     const mockConfig = {
       get: jest.fn().mockImplementation((key: string) => {
         if (key === "AUTH_LOG_HMAC_SECRET") return "test-log-hmac-secret-min16ch";
+        if (key === "AUTH_JWT_SECRET") return "test-jwt-secret-at-least-32-chars-long!";
         return undefined;
       }),
     };
@@ -103,6 +104,28 @@ describe("AbusePreventionService", () => {
         expect(err.getStatus()).toBe(HttpStatus.TOO_MANY_REQUESTS);
         expect(err.getResponse().message).toMatch(/Too many authentication attempts/);
       }
+    });
+  });
+
+  describe("Per-Account Across-IP Cap (Progressive Delay, No Hard Lock)", () => {
+    const schoolId = "018f0000-0000-7000-8000-000000000001";
+    const victimEmail = "rotating-botnet-target@school.com";
+
+    it("should throttle rotating IP attacks against single account with progressive delay without hard lockout", async () => {
+      // 5 different IPs attempt 1 failed login each (no single IP hits the 5-attempt pair limit)
+      for (let i = 1; i <= 5; i++) {
+        await service.recordFailedLogin(`198.51.100.${i}`, victimEmail, schoolId);
+      }
+
+      // Next attempt from a 6th IP experiences progressive delay, but is NOT hard-locked
+      const start = Date.now();
+      await expect(
+        service.checkPreLogin("198.51.100.6", victimEmail, schoolId),
+      ).resolves.not.toThrow();
+      const elapsed = Date.now() - start;
+
+      // Assert progressive delay occurred (>= 150ms)
+      expect(elapsed).toBeGreaterThanOrEqual(150);
     });
   });
 

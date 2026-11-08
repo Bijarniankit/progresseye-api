@@ -43,6 +43,8 @@ describe("AuthService", () => {
       revokeAllUserSessions: jest.fn(),
       getUserSessions: jest.fn(),
       revokeSessionById: jest.fn(),
+      revokeOtherUserSessions: jest.fn(),
+      updateUserPassword: jest.fn(),
       recordAuditLog: jest.fn(),
     };
 
@@ -328,6 +330,81 @@ describe("AuthService", () => {
       await expect(service.revokeSession(schoolId, userId, "non-existent")).rejects.toThrow(
         NotFoundException,
       );
+    });
+  });
+
+  describe("Password Change Revoking Other Sessions", () => {
+    const currentSessionId = "session-1";
+
+    it("should change password, update password hash, and revoke all other sessions for user", async () => {
+      mockSessionRepo.findUserById?.mockResolvedValue({
+        id: userId,
+        schoolId,
+        email: "alice@school.com",
+        firstName: "Alice",
+        lastName: "Smith",
+        passwordHash: "$argon2id$old-hash",
+        isActive: true,
+      } as any);
+
+      mockPasswordService.verify?.mockResolvedValue(true);
+      mockPasswordService.validatePolicy?.mockReturnValue({ valid: true });
+      mockPasswordService.evaluateStrength?.mockReturnValue({
+        score: 4,
+        warning: null,
+        suggestions: [],
+      });
+      mockPasswordService.hash?.mockResolvedValue("$argon2id$new-hash");
+      mockSessionRepo.revokeOtherUserSessions?.mockResolvedValue(2);
+
+      const res = await service.changePassword(
+        schoolId,
+        userId,
+        currentSessionId,
+        {
+          currentPassword: "OldPassword123!",
+          newPassword: "NewSuperPassword12345!",
+        },
+        { ip: "127.0.0.1", userAgent: "Firefox" },
+      );
+
+      expect(res.revokedOtherSessionsCount).toBe(2);
+      expect(mockSessionRepo.updateUserPassword).toHaveBeenCalledWith(
+        schoolId,
+        userId,
+        "$argon2id$new-hash",
+      );
+      expect(mockSessionRepo.revokeOtherUserSessions).toHaveBeenCalledWith(
+        schoolId,
+        userId,
+        currentSessionId,
+      );
+      expect(mockSessionRepo.recordAuditLog).toHaveBeenCalled();
+    });
+
+    it("should reject password change when current password is invalid", async () => {
+      mockSessionRepo.findUserById?.mockResolvedValue({
+        id: userId,
+        schoolId,
+        email: "alice@school.com",
+        passwordHash: "$argon2id$old-hash",
+        isActive: true,
+      } as any);
+
+      mockPasswordService.verify?.mockResolvedValue(false);
+
+      await expect(
+        service.changePassword(
+          schoolId,
+          userId,
+          currentSessionId,
+          {
+            currentPassword: "WrongOldPassword!",
+            newPassword: "NewSuperPassword12345!",
+          },
+          { ip: "127.0.0.1" },
+        ),
+      ).rejects.toThrow(UnauthorizedException);
     });
   });
 });

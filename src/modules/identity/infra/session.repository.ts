@@ -219,6 +219,51 @@ export class SessionRepository {
   }
 
   /**
+   * Revokes all active sessions for a user EXCEPT the current active session.
+   * Used during password change to ensure other devices/browsers are immediately invalidated.
+   */
+  async revokeOtherUserSessions(
+    schoolId: string,
+    userId: string,
+    exceptSessionId: string,
+  ): Promise<number> {
+    return this.prisma.withTenant(schoolId, async (tx) => {
+      const res = await tx.session.updateMany({
+        where: {
+          schoolId,
+          userId,
+          id: { not: exceptSessionId },
+          revokedAt: null,
+        },
+        data: {
+          revokedAt: new Date(),
+        },
+      });
+      return res.count;
+    });
+  }
+
+  /**
+   * Updates user password hash within school tenant RLS.
+   */
+  async updateUserPassword(
+    schoolId: string,
+    userId: string,
+    newPasswordHash: string,
+  ): Promise<void> {
+    await this.prisma.withTenant(schoolId, async (tx) => {
+      await tx.user.update({
+        where: { id: userId, schoolId },
+        data: {
+          passwordHash: newPasswordHash,
+          mustChangePassword: false,
+          updatedAt: new Date(),
+        },
+      });
+    });
+  }
+
+  /**
    * Gets list of active sessions for a user within a school.
    */
   async getUserSessions(schoolId: string, userId: string) {

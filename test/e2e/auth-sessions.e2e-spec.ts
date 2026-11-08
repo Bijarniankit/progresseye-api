@@ -3,6 +3,7 @@ import fastifyCookie from "@fastify/cookie";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
 import { Test, type TestingModule } from "@nestjs/testing";
 import * as argon2 from "argon2";
+import { SignJWT } from "jose";
 import request from "supertest";
 import { uuidv7 } from "uuidv7";
 import { AppModule } from "../../src/app.module";
@@ -145,6 +146,7 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
               id: userAId,
               schoolId: schoolAId,
               email: "alice@greenwood.com",
+              passwordHash,
               firstName: "Alice",
               lastName: "Smith",
               isActive: true,
@@ -229,6 +231,30 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
           return mockSessions.filter(
             (s) => s.schoolId === schoolId && s.userId === userId && !s.revokedAt,
           );
+        });
+
+      jest
+        .spyOn(sessionRepo, "revokeOtherUserSessions")
+        .mockImplementation(async (schoolId: string, userId: string, exceptSessionId: string) => {
+          let count = 0;
+          for (const s of mockSessions) {
+            if (
+              s.schoolId === schoolId &&
+              s.userId === userId &&
+              s.id !== exceptSessionId &&
+              !s.revokedAt
+            ) {
+              s.revokedAt = new Date();
+              count++;
+            }
+          }
+          return count;
+        });
+
+      jest
+        .spyOn(sessionRepo, "updateUserPassword")
+        .mockImplementation(async (_schoolId: string, _userId: string, newHash: string) => {
+          passwordHash = newHash;
         });
 
       jest.spyOn(sessionRepo, "recordUserLogin").mockResolvedValue(undefined);
@@ -534,6 +560,43 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
 
       expect(legitRes.body.accessToken).toBeDefined();
     });
+
+    it("should apply progressive delay across rotating IPs targeting single account without hard lockout", async () => {
+      // 5 distinct IPs attempt 1 wrong password each against Bob's account
+      for (let i = 1; i <= 5; i++) {
+        await request(app.getHttpServer())
+          .post("/api/v1/auth/login")
+          .set("X-Forwarded-For", `198.51.100.${i}`)
+          .send({
+            schoolSlug: "oakridge",
+            email: "bob@oakridge.com",
+            password: "WrongPassword999!",
+          })
+          .expect(401);
+      }
+
+      // 6th rotating IP experiences progressive delay, but Bob can still log in with correct password
+      const start = Date.now();
+      const legitRes = await request(app.getHttpServer())
+        .post("/api/v1/auth/login")
+        .set("X-Forwarded-For", "198.51.100.6")
+        .send({
+          schoolSlug: "oakridge",
+          email: "bob@oakridge.com",
+          password: rawPassword,
+        })
+        .expect(200);
+
+      const elapsed = Date.now() - start;
+      expect(elapsed).toBeGreaterThanOrEqual(150);
+      expect(legitRes.body.accessToken).toBeDefined();
+
+      // Clean up Bob's session after test
+      await request(app.getHttpServer())
+        .post("/api/v1/auth/logout-all")
+        .set("Authorization", `Bearer ${legitRes.body.accessToken}`)
+        .expect(200);
+    });
   });
 
   describe("09. Logout-All Tenant Scoped (Amendment 9)", () => {
@@ -619,6 +682,24 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
         .set("Authorization", `Bearer ${expiredToken}`)
         .expect(401);
     });
+
+    it("should reject token signed with wrong key", async () => {
+      const wrongKeySecret = new TextEncoder().encode("wrong-key-secret-min32-characters-long!!");
+      const wrongKeyToken = await new SignJWT({
+        sub: userAId,
+        schoolId: schoolAId,
+        sessionId: uuidv7(),
+      })
+        .setProtectedHeader({ alg: "HS256" })
+        .setIssuedAt()
+        .setExpirationTime("15m")
+        .sign(wrongKeySecret);
+
+      await request(app.getHttpServer())
+        .get("/api/v1/auth/me")
+        .set("Authorization", `Bearer ${wrongKeyToken}`)
+        .expect(401);
+    });
   });
 
   describe("11. CSRF Defence on Refresh & Logout (Amendment 5)", () => {
@@ -637,6 +718,84 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
       expect(logsCombined).not.toContain(rawPassword);
       expect(logsCombined).not.toContain("WrongPassword999!");
       expect(logsCombined).not.toContain("super-secret-plain-text");
+    });
+  });
+
+  describe("13. Password Change Revoking Other Sessions", () => {
+    it("should allow password change on device 1, keep session 1 active, and revoke session 2", async () => {
+      // 1. Login on device 1
+      const login1 = await request(app.getHttpServer())
+        .post("/api/v1/auth/login")
+        .send({
+          schoolSlug: "greenwood",
+          email: "alice@greenwood.com",
+          password: rawPassword,
+        })
+        .expect(200);
+
+      const cookie1 = login1.headers["set-cookie"]?.[0]?.split(";")[0] || "";
+
+      // 2. Login on device 2
+      const login2 = await request(app.getHttpServer())
+        .post("/api/v1/auth/login")
+        .send({
+          schoolSlug: "greenwood",
+          email: "alice@greenwood.com",
+          password: rawPassword,
+        })
+        .expect(200);
+
+      const cookie2 = login2.headers["set-cookie"]?.[0]?.split(";")[0] || "";
+
+      // Check 2 active sessions
+      const sessionsBefore = await request(app.getHttpServer())
+        .get("/api/v1/auth/sessions")
+        .set("Authorization", `Bearer ${login1.body.accessToken}`)
+        .expect(200);
+
+      expect(sessionsBefore.body.sessions).toHaveLength(2);
+
+      // 3. Alice changes password from device 1
+      const newPassword = "NewAlicePassword12345!";
+      const changeRes = await request(app.getHttpServer())
+        .post("/api/v1/auth/change-password")
+        .set("Authorization", `Bearer ${login1.body.accessToken}`)
+        .send({
+          currentPassword: rawPassword,
+          newPassword,
+        })
+        .expect(200);
+
+      expect(changeRes.body.revokedOtherSessionsCount).toBe(1);
+
+      // 4. Device 1 session remains valid
+      await request(app.getHttpServer())
+        .get("/api/v1/auth/me")
+        .set("Authorization", `Bearer ${login1.body.accessToken}`)
+        .expect(200);
+
+      // 5. Device 2 refresh attempt fails because its session was revoked
+      await request(app.getHttpServer())
+        .post("/api/v1/auth/refresh")
+        .set("Cookie", cookie2)
+        .send({})
+        .expect(401);
+
+      // 6. Active sessions for Alice is now down to 1
+      const sessionsAfter = await request(app.getHttpServer())
+        .get("/api/v1/auth/sessions")
+        .set("Authorization", `Bearer ${login1.body.accessToken}`)
+        .expect(200);
+
+      expect(sessionsAfter.body.sessions).toHaveLength(1);
+
+      // Restore password for other tests
+      passwordHash = await argon2.hash(rawPassword, {
+        type: argon2.argon2id,
+        memoryCost: 4096,
+        timeCost: 2,
+        parallelism: 1,
+      });
     });
   });
 });

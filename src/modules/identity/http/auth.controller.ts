@@ -20,6 +20,7 @@ import { ZodValidationPipe } from "../../../common/pipes/zod-validation.pipe";
 import { AppConfigService } from "../../../config/config.service";
 import { AuthService } from "../application/auth.service";
 import { LoginResponseDto, RefreshResponseDto, SessionListDto } from "../dto/auth-response.dto";
+import { ChangePasswordDto, ChangePasswordSchema } from "../dto/change-password.dto";
 import { LoginDto, LoginSchema } from "../dto/login.dto";
 import { PasswordStrengthDto, PasswordStrengthSchema } from "../dto/password-strength.dto";
 import { RefreshDto, RefreshSchema } from "../dto/refresh.dto";
@@ -202,6 +203,27 @@ export class AuthController {
       success: true,
       message: "Session successfully revoked.",
     };
+  }
+
+  @Post("change-password")
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(TenantContextInterceptor)
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: "Change current user password and revoke all other active sessions",
+  })
+  async changePassword(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body(new ZodValidationPipe(ChangePasswordSchema)) body: ChangePasswordDto,
+    @Req() req: FastifyRequest,
+  ) {
+    const ip = req.ip || "127.0.0.1";
+    const userAgent = (req.headers["user-agent"] as string) || "unknown";
+    return this.authService.changePassword(user.schoolId, user.userId, user.sessionId, body, {
+      ip,
+      userAgent,
+    });
   }
 
   @Get("me")

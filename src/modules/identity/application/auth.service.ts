@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -11,6 +12,7 @@ import { AppConfigService } from "../../../config/config.service";
 import { AbusePreventionService } from "../domain/abuse-prevention.service";
 import { PasswordService } from "../domain/password.service";
 import { TokenService } from "../domain/token.service";
+import type { ChangePasswordDto } from "../dto/change-password.dto";
 import type { LoginDto } from "../dto/login.dto";
 import { SessionRepository } from "../infra/session.repository";
 
@@ -361,6 +363,73 @@ export class AuthService {
       entityId: sessionId,
       metadata: { targetSessionId: sessionId },
     });
+  }
+
+  /**
+   * Changes current user's password, validates policy, updates hash,
+   * and revokes all other active sessions for that user.
+   */
+  async changePassword(
+    schoolId: string,
+    userId: string,
+    currentSessionId: string,
+    dto: ChangePasswordDto,
+    meta: { userAgent?: string; ip: string },
+  ) {
+    this.tenantContext.validateTenantId(schoolId);
+    const user = await this.sessionRepository.findUserById(schoolId, userId);
+    if (!user || !user.isActive || !user.passwordHash) {
+      throw new UnauthorizedException("User not found or inactive.");
+    }
+
+    const isCurrentValid = await this.passwordService.verify(
+      user.passwordHash,
+      dto.currentPassword,
+    );
+    if (!isCurrentValid) {
+      throw new UnauthorizedException("Current password is incorrect.");
+    }
+
+    const policy = this.passwordService.validatePolicy(dto.newPassword);
+    if (!policy.valid) {
+      throw new BadRequestException(
+        policy.message || "Password does not meet security requirements.",
+      );
+    }
+
+    const strength = this.passwordService.evaluateStrength(dto.newPassword, [
+      user.email,
+      user.firstName,
+      user.lastName,
+    ]);
+    if (strength.score < 3) {
+      throw new BadRequestException("Password is too weak. Please choose a stronger password.");
+    }
+
+    const newHash = await this.passwordService.hash(dto.newPassword);
+    await this.sessionRepository.updateUserPassword(schoolId, userId, newHash);
+    const revokedCount = await this.sessionRepository.revokeOtherUserSessions(
+      schoolId,
+      userId,
+      currentSessionId,
+    );
+
+    await this.sessionRepository.recordAuditLog({
+      schoolId,
+      actorId: userId,
+      action: "AUTH.PASSWORD_CHANGED",
+      entityId: userId,
+      metadata: {
+        revokedOtherSessionsCount: revokedCount,
+        ipAddress: meta.ip,
+        userAgent: meta.userAgent,
+      },
+    });
+
+    return {
+      message: "Password changed successfully. Other sessions have been revoked.",
+      revokedOtherSessionsCount: revokedCount,
+    };
   }
 
   /**

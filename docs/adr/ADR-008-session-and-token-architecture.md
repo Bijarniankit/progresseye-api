@@ -29,17 +29,25 @@ Because refresh and logout requests do not carry a Bearer JWT, the database cann
 
 ### 3. Token Rotation, Grace Window, and Family Revocation
 - **One-time Use**: Refresh tokens are rotated on every use within an atomic database transaction.
-- **Grace Window**: A 10-second grace window handles concurrent mobile network requests and retries. Duplicate requests within 10 seconds return the identical successor token.
+- **Encrypted Multi-Instance Grace Window**: A 10-second grace window handles concurrent mobile network requests and retries. Duplicate requests within 10 seconds return the identical successor token. The raw successor refresh token is stored in Redis (with 10-second TTL) encrypted at rest using AES-256-GCM (key derived from `AUTH_JWT_SECRET`). Across all API cluster instances, duplicate requests decrypt and retrieve the cached successor, avoiding raw token exposure in cache storage while supporting horizontal scaling.
 - **Family Revocation**: Presentation of a revoked token outside the grace window indicates a token replay or theft. The entire session tree (`familyId`) is revoked immediately across all devices.
 - **Lifetimes**: Access token = 15 minutes; Refresh token = 30 days sliding, capped at 90 days absolute from initial family creation.
 
-### 4. Anti-DoS Lockout
+### 4. Anti-DoS Lockout & Rotating IP Throttling
 - **Account + IP Pair Tracking**: Failed login attempts are tracked per `(emailHash, ipHash)` pair.
 - 5 consecutive failures lock that IP out for that account for 15 minutes.
 - Attackers attempting to brute-force a victim account from one IP do not lock out the legitimate user connecting from their own IP.
 - Global per-IP rate limit caps total failed requests at 20 per 15 minutes.
+- **Per-Account Across-IP Rotating Botnet Protection (Progressive Delay, No Hard Lock)**:
+  - If an attacker rotates proxy IP addresses targeting a single victim account across multiple IPs, individual `(email, IP)` pairs would not trip.
+  - To prevent unlimited distributed guessing, a per-account counter tracks cumulative failures across all IPs.
+  - Upon reaching 5 failures, subsequent requests incur an exponential progressive delay (200ms up to 2000ms per attempt).
+  - **Trade-off Decision**: We deliberately enforce **progressive delay and NO hard lock** globally across the account. A global hard lock on the user account would hand attackers a trivial Denial of Service vector against any target (an attacker could deliberately lock out any executive, teacher, or student with 5 requests from a botnet). Progressive delay drastically diminishes brute-force throughput without denying access to legitimate account owners.
 
-### 5. Transport and Cookie Security
+### 5. Password Change & Session Invalidation
+- When a user changes their password, all active sessions belonging to that user across all devices except the current session (`sessionId` in JWT) are immediately revoked (`revoked_at = CURRENT_TIMESTAMP`).
+
+### 6. Transport and Cookie Security
 - Web clients receive refresh tokens in an `HttpOnly`, `SameSite=Lax`, `Path=/api/v1/auth` cookie named `pe_refresh`.
 - SameSite `Partitioned` is omitted (unnecessary for 1st-party same-origin architecture with API rewrites).
 - State-changing auth requests validate the `Origin` header against permitted frontend origins.
