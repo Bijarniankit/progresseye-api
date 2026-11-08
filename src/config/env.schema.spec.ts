@@ -172,6 +172,21 @@ describe("Environment Configuration Validation", () => {
         /AUTH_GRACE_ENC_KEY must be at least 32 characters and cannot use default\/weak patterns in production/,
       );
     });
+
+    it("should hit production guards when APP_ENV is staging but NODE_ENV is production", () => {
+      expect(() =>
+        validateEnv({
+          ...baseProdConfig,
+          APP_ENV: "staging",
+          NODE_ENV: "production",
+          TURNSTILE_ENABLED: "true",
+          TURNSTILE_SECRET_KEY: "0x4AAAAAAAxRealCloudflareSecretKeyExample",
+          AUTH_GRACE_ENC_KEY: "dev-insecure-grace-key-min32charslong!",
+        }),
+      ).toThrow(
+        /AUTH_GRACE_ENC_KEY must be at least 32 characters and cannot use default\/weak patterns in production/,
+      );
+    });
   });
 
   describe("HSTS_MAX_AGE_SECONDS configuration", () => {

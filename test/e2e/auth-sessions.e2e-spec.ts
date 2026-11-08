@@ -3,6 +3,7 @@ import fastifyCookie from "@fastify/cookie";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
 import { Test, type TestingModule } from "@nestjs/testing";
 import * as argon2 from "argon2";
+import type Redis from "ioredis";
 import { SignJWT } from "jose";
 import request from "supertest";
 import { uuidv7 } from "uuidv7";
@@ -829,8 +830,9 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
   describe("14. Redis Distributed Cache Failure (HTTP 503)", () => {
     it("should return HTTP 503 Service Unavailable on refresh when Redis distributed cache is down", async () => {
       const redisService = app.get(RedisService);
-      const originalGetClient = redisService.getClient;
-      jest.spyOn(redisService, "getClient").mockReturnValue({ status: "connecting" } as any);
+      const spy = jest
+        .spyOn(redisService, "getClient")
+        .mockReturnValue({ status: "connecting" } as unknown as Redis);
 
       try {
         await request(app.getHttpServer())
@@ -838,7 +840,7 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
           .send({ refreshToken: "schoolA.some-raw-token" })
           .expect(503);
       } finally {
-        jest.spyOn(redisService, "getClient").mockImplementation(originalGetClient);
+        spy.mockRestore();
       }
     });
   });

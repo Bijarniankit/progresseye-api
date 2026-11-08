@@ -121,6 +121,9 @@ jobs:
           SMTP_PORT: 1025
           MAIL_FROM: noreply@progresseye.com
           LEAD_NOTIFICATION_RECIPIENT: leads@progresseye.com
+          AUTH_JWT_SECRET: ci_jwt_secret_throwaway_token_min_32_chars_long
+          AUTH_LOG_HMAC_SECRET: ci_hmac_secret_throwaway_token
+          AUTH_GRACE_ENC_KEY: ci_grace_enc_throwaway_key_min_32_chars_long
         run: pnpm test:e2e
 
       - name: Run Build
@@ -130,6 +133,9 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres@localhost:5432/test_db
           DIRECT_URL: postgresql://postgres@localhost:5432/test_db
+          AUTH_JWT_SECRET: ci_jwt_secret_throwaway_token_min_32_chars_long
+          AUTH_LOG_HMAC_SECRET: ci_hmac_secret_throwaway_token
+          AUTH_GRACE_ENC_KEY: ci_grace_enc_throwaway_key_min_32_chars_long
         run: |
           pnpm openapi:generate
           git diff --exit-code openapi/ docs/openapi.json

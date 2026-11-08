@@ -61,8 +61,8 @@ Because refresh and logout requests do not carry a Bearer JWT, the database cann
 - Platform-level security telemetry (e.g. IP-level rate-limiting blocks) is routed to Pino structured logs pending the implementation of `platform_audit_logs`.
 
 ### 7. Dependency Selection and Ecosystem Versions
-- `@fastify/cookie` version `10.0.1` vs `11.0.2`: Selected for compatibility with Fastify 5 plugin registration in NestJS FastifyAdapter. Note: Version divergence rationale is `UNVERIFIED` (derived from training memory rather than live npm registry comparison against 11.0.2); compatibility will be validated during staging deployment (`PLACEHOLDERS.md`).
-- `zxcvbn` version `4.4.2`: Selected for NIST SP 800-63B password strength entropy estimation. Note: Version selection and comparison against modern TypeScript ports (e.g. `@zxcvbn-ts/core`) is `UNVERIFIED` (derived from training memory); tracked for formal benchmark/audit in Phase 12b (`PLACEHOLDERS.md`).
+- `@fastify/cookie` version `10.0.1` vs `11.x`: Selected for compatibility with Fastify 5 plugin registration in NestJS FastifyAdapter. Note: Version divergence rationale is `UNVERIFIED` (derived from training memory rather than live npm registry comparison against 11.x); compatibility will be validated during staging deployment (`PLACEHOLDERS.md`).
+- `@zxcvbn-ts/core 4.2.0` and `@zxcvbn-ts/language-en 4.1.1`: Modern TypeScript-native implementation selected for NIST SP 800-63B password strength entropy estimation.
 
 ## Consequences
 - Clean tenant isolation without requiring `BYPASSRLS` privileges for the application role.

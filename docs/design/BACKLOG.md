@@ -76,6 +76,11 @@ Deferred maintenance chores and dependency upgrades scheduled for execution at t
 - **Context**: Under the single-origin architecture, the web frontend proxies API requests via a `/api` rewrite (`https://staging.progresseye.com/api/*` -> backend API). In Phase 12a, refresh tokens are set via `Set-Cookie: pe_refresh_token=...; Path=/api/v1/auth; HttpOnly; SameSite=Lax`.
 - **Checklist Item**: During staging deployment smoke tests, verify that Next.js reverse proxy rewrites forward the upstream `Set-Cookie` response headers back to the browser client and that subsequent browser requests to `/api/v1/auth/refresh` correctly relay the `Cookie` header upstream to the API server without stripping or domain mismatches.
 
+### 13. Replace Substring Pattern Matching for Weak Keys with Entropy and Diversity Check
+- **Context**: In Phase 12a, `src/config/env.schema.ts` checks production secrets (`AUTH_JWT_SECRET`, `AUTH_GRACE_ENC_KEY`, `AUTH_LOG_HMAC_SECRET`) using minimum length guards and a blacklist of substring patterns (e.g. `'dev-jwt-secret'`, `'default'`, `'secret'`, `'123456'`).
+- **Rationale**: Substring pattern matching is inherently brittle, easily bypassed by minor permutations (e.g. `'s3cret'`, `'dev_jwt_secret'`), and provides a false sense of security.
+- **Checklist Item**: Replace substring blacklist checks with a formal Shannon entropy metric (e.g. minimum 3.5 bits/char) or cryptographic character-set diversity and minimum random byte validation (e.g. min 32 hex/base64 random characters, rejected if low-entropy character repetitions are detected).
+
 
 
 
