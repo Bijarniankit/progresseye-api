@@ -9,6 +9,7 @@ import { AppConfigService } from "./config/config.service";
 import { PrismaModule } from "./infra/prisma/prisma.module";
 import { RedisModule } from "./infra/redis/redis.module";
 import { ThrottlerStorageRedisService } from "./infra/redis/throttler-storage-redis.service";
+import { IdentityModule } from "./modules/identity/identity.module";
 import { DiagnosticModule } from "./modules/platform/diagnostic/diagnostic.module";
 import { HealthModule } from "./modules/platform/health/health.module";
 import { PublicModule } from "./modules/public/public.module";
@@ -49,7 +50,14 @@ import { PublicModule } from "./modules/public/public.module";
             'req.headers["cf-connecting-ip"]',
             "req.remoteAddress",
             "body.password",
+            "body.currentPassword",
+            "body.newPassword",
             "body.token",
+            "body.refreshToken",
+            "body.otp",
+            "body.code",
+            "body.recoveryCode",
+            "body.twoFactorSecret",
             "body.secret",
             "body.apiKey",
             "body.email",
@@ -83,6 +91,7 @@ import { PublicModule } from "./modules/public/public.module";
     HealthModule,
     DiagnosticModule,
     PublicModule,
+    IdentityModule,
   ],
   controllers: [],
   providers: [

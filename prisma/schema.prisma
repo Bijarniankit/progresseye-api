@@ -82,11 +82,15 @@ model User {
   schoolId     String    @map("school_id") @db.Uuid
   email        String    @db.Citext
   phone        String?
-  passwordHash String?   @map("password_hash")
-  firstName    String    @map("first_name")
-  lastName     String    @map("last_name")
-  isActive     Boolean   @default(true) @map("is_active")
-  createdAt    DateTime  @default(now()) @map("created_at")
+  passwordHash        String?   @map("password_hash")
+  firstName           String    @map("first_name")
+  lastName            String    @map("last_name")
+  isActive            Boolean   @default(true) @map("is_active")
+  mustChangePassword  Boolean   @default(false) @map("must_change_password")
+  failedLoginAttempts Int       @default(0) @map("failed_login_attempts")
+  lockedUntil         DateTime? @map("locked_until")
+  lastLoginAt         DateTime? @map("last_login_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt    DateTime  @updatedAt @map("updated_at")
   deletedAt    DateTime? @map("deleted_at")
 
@@ -103,21 +107,25 @@ model User {
 // 5. Sessions (Tenant Scoped, Immutable/Revocable)
 // ---------------------------------------------------------
 model Session {
-  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  schoolId   String    @map("school_id") @db.Uuid
-  userId     String    @map("user_id") @db.Uuid
-  tokenHash  String    @unique @map("token_hash")
-  userAgent  String?   @map("user_agent")
-  ipAddress  String?   @map("ip_address")
-  expiresAt  DateTime  @map("expires_at")
-  revokedAt  DateTime? @map("revoked_at")
-  createdAt  DateTime  @default(now()) @map("created_at")
-  updatedAt  DateTime  @updatedAt @map("updated_at")
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId        String    @map("school_id") @db.Uuid
+  userId          String    @map("user_id") @db.Uuid
+  familyId        String    @default(dbgenerated("gen_random_uuid()")) @map("family_id") @db.Uuid
+  parentTokenHash String?   @map("parent_token_hash")
+  tokenHash       String    @unique @map("token_hash")
+  clientType      String    @default("web") @map("client_type")
+  userAgent       String?   @map("user_agent")
+  ipAddress       String?   @map("ip_address")
+  expiresAt       DateTime  @map("expires_at")
+  revokedAt       DateTime? @map("revoked_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
 
   school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([schoolId, userId])
+  @@index([schoolId, familyId])
   @@map("sessions")
 }
 

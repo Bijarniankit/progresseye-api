@@ -40,7 +40,14 @@ export const baseEnvSchema = z.object({
   // Logging
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
 
-  // Auth secrets (defaults provided for development/test if not specified)
+  // Auth & Session Configuration (Phase 12)
+  AUTH_JWT_SECRET: z.string().min(32).default("dev-jwt-secret-at-least-32-characters-long-pe"),
+  AUTH_JWT_KID: z.string().default("pe-key-2026-v1"),
+  AUTH_LOG_HMAC_SECRET: z.string().min(16).default("dev-auth-log-hmac-secret-min16ch"),
+  AUTH_GRACE_ENC_KEY: z.string().min(32).default("dev-insecure-grace-key-min32charslong!"),
+  AUTH_BREACHED_PASSWORD_CHECK_ENABLED: z.enum(["true", "false"]).default("false"),
+
+  // Legacy auth secrets (deprecated in favor of AUTH_JWT_SECRET)
   JWT_ACCESS_SECRET: z.string().min(16).default("progress-eye-dev-access-secret-32ch"),
   JWT_REFRESH_SECRET: z.string().min(16).default("progress-eye-dev-refresh-secret-32c"),
 
@@ -95,6 +102,54 @@ export const envSchema = baseEnvSchema.superRefine((data, ctx) => {
         path: ["TURNSTILE_SECRET_KEY"],
         message:
           "TURNSTILE_SECRET_KEY cannot be empty or a Cloudflare test key in production. See https://developers.cloudflare.com/turnstile/troubleshooting/testing/",
+      });
+    }
+
+    // Refuse weak or default AUTH_JWT_SECRET in production
+    const weakJwtPatterns = ["dev-jwt-secret", "default", "secret", "progress-eye-dev", "123456"];
+    if (
+      !data.AUTH_JWT_SECRET ||
+      data.AUTH_JWT_SECRET.length < 32 ||
+      weakJwtPatterns.some((pattern) => data.AUTH_JWT_SECRET.toLowerCase().includes(pattern))
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["AUTH_JWT_SECRET"],
+        message:
+          "AUTH_JWT_SECRET must be at least 32 characters and cannot use default/weak patterns in production.",
+      });
+    }
+
+    // Refuse default AUTH_LOG_HMAC_SECRET in production
+    if (
+      !data.AUTH_LOG_HMAC_SECRET ||
+      data.AUTH_LOG_HMAC_SECRET.toLowerCase().includes("dev-auth-log-hmac")
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["AUTH_LOG_HMAC_SECRET"],
+        message: "AUTH_LOG_HMAC_SECRET cannot use default development values in production.",
+      });
+    }
+
+    // Refuse weak or default AUTH_GRACE_ENC_KEY in production
+    const weakGracePatterns = [
+      "dev-insecure-grace-key",
+      "default",
+      "secret",
+      "progress-eye-dev",
+      "123456",
+    ];
+    if (
+      !data.AUTH_GRACE_ENC_KEY ||
+      data.AUTH_GRACE_ENC_KEY.length < 32 ||
+      weakGracePatterns.some((pattern) => data.AUTH_GRACE_ENC_KEY.toLowerCase().includes(pattern))
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["AUTH_GRACE_ENC_KEY"],
+        message:
+          "AUTH_GRACE_ENC_KEY must be at least 32 characters and cannot use default/weak patterns in production.",
       });
     }
   }

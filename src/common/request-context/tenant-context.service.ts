@@ -41,6 +41,16 @@ export class TenantContextService {
   }
 
   /**
+   * Run a synchronous function or stream within a bound tenant context.
+   */
+  runSync<T>(context: TenantContext, fn: () => T): T {
+    if (context.schoolId) {
+      this.validateTenantId(context.schoolId);
+    }
+    return this.storage.run(context, fn);
+  }
+
+  /**
    * Get the current active school/tenant ID, or undefined if no tenant is set.
    */
   getTenantId(): string | undefined {
