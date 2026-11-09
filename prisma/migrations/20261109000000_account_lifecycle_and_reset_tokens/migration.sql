@@ -88,8 +88,8 @@ CREATE POLICY "email_verification_tokens_tenant_isolation" ON "email_verificatio
 ALTER TABLE "password_reset_tokens" OWNER TO progresseye_owner;
 ALTER TABLE "email_verification_tokens" OWNER TO progresseye_owner;
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON "password_reset_tokens" TO progresseye_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON "email_verification_tokens" TO progresseye_app;
+GRANT SELECT, INSERT, UPDATE ON "password_reset_tokens" TO progresseye_app;
+GRANT SELECT, INSERT, UPDATE ON "email_verification_tokens" TO progresseye_app;
 
 GRANT SELECT ON "password_reset_tokens" TO progresseye_ro;
 GRANT SELECT ON "email_verification_tokens" TO progresseye_ro;

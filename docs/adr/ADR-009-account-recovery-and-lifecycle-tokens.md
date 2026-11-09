@@ -58,6 +58,7 @@ Following the pattern established for refresh tokens in ADR-008:
   `{ "message": "If an account matches that email, a password reset link has been sent." }`
   regardless of whether the school slug exists, the user exists, or the user is inactive.
 - If the school or user is not found, a timing-safe dummy password verification is performed to equalize execution duration with the valid lookup path.
+- **Timing Coarseness**: Note that timing comparison between existing and unknown accounts is coarse; exact wall-clock equality is not measured or guaranteed due to network jitter, queue latency, and garbage collection pauses.
 - Pre-auth rate limits enforced via `AbusePreventionService`:
   - Forgot Password: max 10 requests per 15 min per IP; max 3 requests per 15 min per `(email, IP)` pair.
   - Resend Verification: max 3 requests per 15 min per `(email, IP)` pair.
@@ -78,7 +79,7 @@ Following the pattern established for refresh tokens in ADR-008:
     `COALESCE(NULLIF(current_setting('app.current_school_id', true), ''), '00000000-0000-0000-0000-000000000000')::uuid`
 - Minimal table role grants:
   - `progresseye_owner`: Table ownership only (no `GRANT ALL`).
-  - `progresseye_app`: `SELECT, INSERT, UPDATE` (needed for token issuance and marking `used_at`).
+  - `progresseye_app`: `SELECT, INSERT, UPDATE` (needed for token issuance and marking `used_at`; DELETE is intentionally excluded from `progresseye_app` until the future purge job in BACKLOG item 14).
   - `progresseye_ro`: `SELECT` only.
 
 ## Consequences

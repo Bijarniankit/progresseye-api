@@ -10,6 +10,7 @@ import { uuidv7 } from "uuidv7";
 import { AppModule } from "../../src/app.module";
 import { PrismaService } from "../../src/infra/prisma/prisma.service";
 import { RedisService } from "../../src/infra/redis/redis.service";
+import { AuthEmailNotificationService } from "../../src/modules/identity/infra/auth-email-notification.service";
 import { SessionRepository } from "../../src/modules/identity/infra/session.repository";
 
 jest.setTimeout(45000);
@@ -18,6 +19,11 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
   let app: NestFastifyApplication;
   let prisma: PrismaService;
   const testLogBuffer: string[] = [];
+
+  let capturedResetCompoundToken = "";
+  let capturedVerifyCompoundToken = "";
+  let capturedResetEmailPayload: any = null;
+  let capturedVerifyEmailPayload: any = null;
 
   const schoolAId = uuidv7();
   const schoolBId = uuidv7();
@@ -294,6 +300,32 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
 
     await app.init();
     await app.getHttpAdapter().getInstance().ready();
+
+    const authEmailService = app.get(AuthEmailNotificationService);
+    const origSendReset = authEmailService.sendPasswordResetEmail.bind(authEmailService);
+    authEmailService.sendPasswordResetEmail = async (to: string, compoundToken: string) => {
+      capturedResetCompoundToken = compoundToken;
+      return origSendReset(to, compoundToken);
+    };
+
+    const origSendVerify = authEmailService.sendEmailVerificationEmail.bind(authEmailService);
+    authEmailService.sendEmailVerificationEmail = async (to: string, compoundToken: string) => {
+      capturedVerifyCompoundToken = compoundToken;
+      return origSendVerify(to, compoundToken);
+    };
+
+    const deliveryService = (authEmailService as any).emailDeliveryService;
+    if (deliveryService) {
+      const origSendEmail = deliveryService.sendEmail.bind(deliveryService);
+      deliveryService.sendEmail = async (opts: any) => {
+        if (opts.subject.includes("Password")) {
+          capturedResetEmailPayload = opts;
+        } else if (opts.subject.includes("Email") || opts.subject.includes("Verify")) {
+          capturedVerifyEmailPayload = opts;
+        }
+        return origSendEmail(opts);
+      };
+    }
   });
 
   afterAll(async () => {
@@ -883,23 +915,15 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
       expect(resetRow).toHaveLength(1);
 
       // In real scenario, the token sent via email is <schoolId>.<rawToken>.
-      // For testing, let's create a known raw token and insert its hash
-      const crypto = await import("node:crypto");
-      const testRawToken = crypto.randomBytes(32).toString("hex");
-      const testTokenHash = crypto.createHash("sha256").update(testRawToken).digest("hex");
-      const compoundResetToken = `${schoolAId}.${testRawToken}`;
+      // We captured the REAL token dispatched to the email notification service
+      expect(capturedResetCompoundToken).toBeTruthy();
 
-      await prisma.$executeRaw`
-        INSERT INTO password_reset_tokens (id, school_id, user_id, token_hash, expires_at)
-        VALUES (${uuidv7()}::uuid, ${schoolAId}::uuid, ${userAId}::uuid, ${testTokenHash}, CURRENT_TIMESTAMP + INTERVAL '1 hour');
-      `;
-
-      // 4. Submit password reset with new strong password
+      // 4. Submit password reset with new strong password using real captured token
       const newPassword = "NewAlicePassword12345!";
       const resetRes = await request(app.getHttpServer())
         .post("/api/v1/auth/reset-password")
         .send({
-          token: compoundResetToken,
+          token: capturedResetCompoundToken,
           newPassword,
         })
         .expect(200);
@@ -1021,35 +1045,74 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
 
   describe("17. Email Verification Flow & Invalidation of Older Tokens", () => {
     it("should verify email and reject token reuse", async () => {
-      const crypto = await import("node:crypto");
-      const rawToken = crypto.randomBytes(32).toString("hex");
-      const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
-      const compoundToken = `${schoolAId}.${rawToken}`;
+      // 1. Trigger resend verification for Alice to capture real verification token from flow
+      await request(app.getHttpServer())
+        .post("/api/v1/auth/verify-email/resend")
+        .send({
+          schoolSlug: "greenwood",
+          email: "alice@greenwood.com",
+        })
+        .expect(200);
 
-      await prisma.$executeRaw`
-        INSERT INTO email_verification_tokens (id, school_id, user_id, token_hash, expires_at)
-        VALUES (${uuidv7()}::uuid, ${schoolAId}::uuid, ${userAId}::uuid, ${tokenHash}, CURRENT_TIMESTAMP + INTERVAL '24 hours');
-      `;
+      expect(capturedVerifyCompoundToken).toBeTruthy();
 
-      // Verify email
+      // 2. Verify email using the real captured compound token
       const verifyRes = await request(app.getHttpServer())
         .post("/api/v1/auth/verify-email")
-        .send({ token: compoundToken })
+        .send({ token: capturedVerifyCompoundToken })
         .expect(200);
 
       expect(verifyRes.body.message).toContain("Email has been successfully verified");
 
-      // Verify user record has email_verified_at set
+      // 3. Verify user record has email_verified_at set
       const user: any[] = await prisma.$queryRaw`
         SELECT email_verified_at FROM users WHERE id = ${userAId}::uuid;
       `;
       expect(user[0].email_verified_at).not.toBeNull();
 
-      // Replay verification token fails
+      // 4. Replay verification token fails with 400
       await request(app.getHttpServer())
         .post("/api/v1/auth/verify-email")
-        .send({ token: compoundToken })
+        .send({ token: capturedVerifyCompoundToken })
         .expect(400);
+    });
+
+    it("should format email text and html containing token link only after '#' and never after '?'", () => {
+      expect(capturedResetEmailPayload).toBeDefined();
+      expect(capturedResetEmailPayload.subject).toBe("Reset Your ProgressEye Password");
+      expect(capturedResetEmailPayload.subject).not.toContain(capturedResetCompoundToken);
+
+      // Reset text link: token must follow '#' and never '?'
+      expect(capturedResetEmailPayload.text).toContain(
+        `http://localhost:3000/auth/reset-password#token=${capturedResetCompoundToken}`,
+      );
+      expect(capturedResetEmailPayload.text).not.toContain("?token=");
+      expect(capturedResetEmailPayload.text).not.toContain("?");
+
+      // Reset HTML link: token must follow '#' and never '?'
+      expect(capturedResetEmailPayload.html).toContain(
+        `href="http://localhost:3000/auth/reset-password#token=${capturedResetCompoundToken}"`,
+      );
+      expect(capturedResetEmailPayload.html).not.toContain("?token=");
+      expect(capturedResetEmailPayload.html).not.toContain("?");
+
+      expect(capturedVerifyEmailPayload).toBeDefined();
+      expect(capturedVerifyEmailPayload.subject).toBe("Verify Your ProgressEye Email");
+      expect(capturedVerifyEmailPayload.subject).not.toContain(capturedVerifyCompoundToken);
+
+      // Verification text link: token must follow '#' and never '?'
+      expect(capturedVerifyEmailPayload.text).toContain(
+        `http://localhost:3000/auth/verify-email#token=${capturedVerifyCompoundToken}`,
+      );
+      expect(capturedVerifyEmailPayload.text).not.toContain("?token=");
+      expect(capturedVerifyEmailPayload.text).not.toContain("?");
+
+      // Verification HTML link: token must follow '#' and never '?'
+      expect(capturedVerifyEmailPayload.html).toContain(
+        `href="http://localhost:3000/auth/verify-email#token=${capturedVerifyCompoundToken}"`,
+      );
+      expect(capturedVerifyEmailPayload.html).not.toContain("?token=");
+      expect(capturedVerifyEmailPayload.html).not.toContain("?");
     });
   });
 
@@ -1136,32 +1199,34 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
       const unknownSchoolTimes: number[] = [];
 
       for (let i = 0; i < samples; i++) {
-        const ip = `198.51.100.${20 + i}`;
+        const ip1 = `198.51.100.${60 + i * 3 + 1}`;
+        const ip2 = `198.51.100.${60 + i * 3 + 2}`;
+        const ip3 = `198.51.100.${60 + i * 3 + 3}`;
         const email = `unknown-timing-${i}@greenwood.com`;
 
-        // 1. Existing user in existing school
+        // 1. Existing user in existing school (unique IP 1 per request)
         const t1 = performance.now();
         const resExisting = await request(app.getHttpServer())
           .post("/api/v1/auth/forgot-password")
-          .set("x-forwarded-for", ip)
+          .set("x-forwarded-for", ip1)
           .send({ schoolSlug: "greenwood", email: "alice@greenwood.com" })
           .expect(200);
         existingTimes.push(performance.now() - t1);
 
-        // 2. Unknown user in existing school
+        // 2. Unknown user in existing school (unique IP 2 per request)
         const t2 = performance.now();
         const resUnknownUser = await request(app.getHttpServer())
           .post("/api/v1/auth/forgot-password")
-          .set("x-forwarded-for", ip)
+          .set("x-forwarded-for", ip2)
           .send({ schoolSlug: "greenwood", email })
           .expect(200);
         unknownUserTimes.push(performance.now() - t2);
 
-        // 3. Unknown school slug
+        // 3. Unknown school slug (unique IP 3 per request)
         const t3 = performance.now();
         const resUnknownSchool = await request(app.getHttpServer())
           .post("/api/v1/auth/forgot-password")
-          .set("x-forwarded-for", ip)
+          .set("x-forwarded-for", ip3)
           .send({ schoolSlug: "unknown-school-slug", email })
           .expect(200);
         unknownSchoolTimes.push(performance.now() - t3);
@@ -1188,10 +1253,29 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
   });
 
   describe("20. Zero Tokens, Secrets and Passwords in Logs (Phase 12b-1)", () => {
-    it("should never log raw reset tokens, passwords, or verification tokens in Pino logs", () => {
+    it("should never log raw reset tokens, passwords, or verification tokens in Pino logs", async () => {
+      const crypto = await import("node:crypto");
       const combinedLogs = testLogBuffer.join("\n");
+
+      // Passwords
       expect(combinedLogs).not.toContain("NewAlicePassword12345!");
       expect(combinedLogs).not.toContain("NewBobSuperPassword12345!");
+
+      // Captured real reset token (compound, raw, and hash)
+      expect(capturedResetCompoundToken).toBeTruthy();
+      const rawResetToken = capturedResetCompoundToken.split(".")[1] || "";
+      const resetTokenHash = crypto.createHash("sha256").update(rawResetToken).digest("hex");
+      expect(combinedLogs).not.toContain(capturedResetCompoundToken);
+      expect(combinedLogs).not.toContain(rawResetToken);
+      expect(combinedLogs).not.toContain(resetTokenHash);
+
+      // Captured real verification token (compound, raw, and hash)
+      expect(capturedVerifyCompoundToken).toBeTruthy();
+      const rawVerifyToken = capturedVerifyCompoundToken.split(".")[1] || "";
+      const verifyTokenHash = crypto.createHash("sha256").update(rawVerifyToken).digest("hex");
+      expect(combinedLogs).not.toContain(capturedVerifyCompoundToken);
+      expect(combinedLogs).not.toContain(rawVerifyToken);
+      expect(combinedLogs).not.toContain(verifyTokenHash);
     });
   });
 });

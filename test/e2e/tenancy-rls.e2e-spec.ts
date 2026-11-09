@@ -648,26 +648,66 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
       });
     });
 
-    it("should prevent Tenant B from updating or deleting Tenant A tokens (0 rows affected)", async () => {
+    it("should prevent Tenant B from updating Tenant A tokens (0 rows affected)", async () => {
       await tenantContext.run({ schoolId: schoolB }, async () => {
         const client = prisma.client;
         await client.$executeRawUnsafe(`SET ROLE progresseye_app;`);
 
-        const updateCount = await client.$executeRaw`
+        const updateResetCount = await client.$executeRaw`
           UPDATE password_reset_tokens
           SET used_at = CURRENT_TIMESTAMP
           WHERE id = ${testResetTokenId}::uuid;
         `;
-        expect(updateCount).toBe(0);
+        expect(updateResetCount).toBe(0);
 
-        const deleteCount = await client.$executeRaw`
-          DELETE FROM email_verification_tokens
+        const updateVerifyCount = await client.$executeRaw`
+          UPDATE email_verification_tokens
+          SET used_at = CURRENT_TIMESTAMP
           WHERE id = ${testVerifyTokenId}::uuid;
         `;
-        expect(deleteCount).toBe(0);
+        expect(updateVerifyCount).toBe(0);
 
         await client.$executeRawUnsafe(`RESET ROLE;`);
       });
+    });
+
+    it("should reject DELETE on token tables under progresseye_app (permission denied)", async () => {
+      await tenantContext.run({ schoolId: schoolA }, async () => {
+        const client = prisma.client;
+        await client.$executeRawUnsafe(`SET ROLE progresseye_app;`);
+
+        await expect(
+          client.$executeRaw`
+            DELETE FROM password_reset_tokens WHERE id = ${testResetTokenId}::uuid;
+          `,
+        ).rejects.toThrow(/permission denied for table password_reset_tokens/);
+
+        await expect(
+          client.$executeRaw`
+            DELETE FROM email_verification_tokens WHERE id = ${testVerifyTokenId}::uuid;
+          `,
+        ).rejects.toThrow(/permission denied for table email_verification_tokens/);
+
+        await client.$executeRawUnsafe(`RESET ROLE;`);
+      });
+    });
+
+    it("should prevent cross-tenant token deletion under progresseye_owner (0 rows affected via RLS)", async () => {
+      const ownerPrisma = new PrismaClient({
+        datasources: { db: { url: ownerDbUrl } },
+      });
+      await ownerPrisma.$connect();
+
+      // Connected as owner with Tenant B context: attempting to delete Tenant A's token deletes 0 rows due to FORCE RLS
+      await ownerPrisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT set_config('app.current_school_id', ${schoolB}, true);`;
+        const deletedCount = await tx.$executeRaw`
+          DELETE FROM email_verification_tokens WHERE id = ${testVerifyTokenId}::uuid;
+        `;
+        expect(deletedCount).toBe(0);
+      });
+
+      await ownerPrisma.$disconnect();
     });
 
     it("should reject Nil-UUID as school_id for new token tables via check constraints", async () => {
