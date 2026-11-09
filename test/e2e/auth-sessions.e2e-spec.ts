@@ -824,6 +824,9 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
         timeCost: 2,
         parallelism: 1,
       });
+      await prisma.$executeRaw`
+        UPDATE users SET password_hash = ${passwordHash} WHERE id = ${userAId}::uuid;
+      `;
     });
   });
 
