@@ -571,13 +571,24 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
   });
 
   describe("Test 19: Phase 12b-1 Password Reset & Email Verification Tokens RLS Isolation (Amendment 2)", () => {
+    let appPrisma: PrismaService;
     const testResetTokenId = uuidv7();
     const testVerifyTokenId = uuidv7();
 
+    beforeAll(async () => {
+      appPrisma = new PrismaService(tenantContext, {
+        datasources: { db: { url: appDbUrl } },
+      });
+      await appPrisma.$connect();
+    });
+
+    afterAll(async () => {
+      await appPrisma.$disconnect();
+    });
+
     it("should allow Tenant A to insert and read its own password reset and verification tokens", async () => {
       await tenantContext.run({ schoolId: schoolA }, async () => {
-        const client = prisma.client;
-        await client.$executeRawUnsafe(`SET ROLE progresseye_app;`);
+        const client = appPrisma.client;
 
         await client.$executeRaw`
           INSERT INTO password_reset_tokens (id, school_id, user_id, token_hash, expires_at)
@@ -600,15 +611,12 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
         `;
         expect(verifyTokens.length).toBe(1);
         expect(verifyTokens[0].token_hash).toBe("verify-hash-a");
-
-        await client.$executeRawUnsafe(`RESET ROLE;`);
       });
     });
 
     it("should prevent Tenant B from reading Tenant A reset or verification tokens (cross-tenant read isolation)", async () => {
       await tenantContext.run({ schoolId: schoolB }, async () => {
-        const client = prisma.client;
-        await client.$executeRawUnsafe(`SET ROLE progresseye_app;`);
+        const client = appPrisma.client;
 
         const resetTokens: any[] = await client.$queryRaw`
           SELECT id FROM password_reset_tokens WHERE id = ${testResetTokenId}::uuid;
@@ -619,16 +627,13 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
           SELECT id FROM email_verification_tokens WHERE id = ${testVerifyTokenId}::uuid;
         `;
         expect(verifyTokens.length).toBe(0);
-
-        await client.$executeRawUnsafe(`RESET ROLE;`);
       });
     });
 
     it("should reject cross-tenant inserts for reset and verification tokens (RLS WITH CHECK)", async () => {
       const maliciousId = uuidv7();
       await tenantContext.run({ schoolId: schoolA }, async () => {
-        const client = prisma.client;
-        await client.$executeRawUnsafe(`SET ROLE progresseye_app;`);
+        const client = appPrisma.client;
 
         await expect(
           client.$executeRaw`
@@ -643,15 +648,12 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
             VALUES (${maliciousId}::uuid, ${schoolB}::uuid, ${userBId}::uuid, 'malicious-verify-hash', CURRENT_TIMESTAMP + INTERVAL '24 hours');
           `,
         ).rejects.toThrow();
-
-        await client.$executeRawUnsafe(`RESET ROLE;`);
       });
     });
 
     it("should prevent Tenant B from updating Tenant A tokens (0 rows affected)", async () => {
       await tenantContext.run({ schoolId: schoolB }, async () => {
-        const client = prisma.client;
-        await client.$executeRawUnsafe(`SET ROLE progresseye_app;`);
+        const client = appPrisma.client;
 
         const updateResetCount = await client.$executeRaw`
           UPDATE password_reset_tokens
@@ -666,15 +668,12 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
           WHERE id = ${testVerifyTokenId}::uuid;
         `;
         expect(updateVerifyCount).toBe(0);
-
-        await client.$executeRawUnsafe(`RESET ROLE;`);
       });
     });
 
     it("should reject DELETE on token tables under progresseye_app (permission denied)", async () => {
       await tenantContext.run({ schoolId: schoolA }, async () => {
-        const client = prisma.client;
-        await client.$executeRawUnsafe(`SET ROLE progresseye_app;`);
+        const client = appPrisma.client;
 
         await expect(
           client.$executeRaw`
@@ -687,8 +686,6 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
             DELETE FROM email_verification_tokens WHERE id = ${testVerifyTokenId}::uuid;
           `,
         ).rejects.toThrow(/permission denied for table email_verification_tokens/);
-
-        await client.$executeRawUnsafe(`RESET ROLE;`);
       });
     });
 
