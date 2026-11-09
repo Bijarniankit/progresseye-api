@@ -1128,6 +1128,63 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
       expect(res1.body.message).toBe(res2.body.message);
       expect(res2.body.message).toBe(res3.body.message);
     });
+
+    it("should exhibit comparable latency between existing user, non-existing user, and non-existing school (coarse timing test)", async () => {
+      const samples = 3;
+      const existingTimes: number[] = [];
+      const unknownUserTimes: number[] = [];
+      const unknownSchoolTimes: number[] = [];
+
+      for (let i = 0; i < samples; i++) {
+        const ip = `198.51.100.${20 + i}`;
+        const email = `unknown-timing-${i}@greenwood.com`;
+
+        // 1. Existing user in existing school
+        const t1 = performance.now();
+        const resExisting = await request(app.getHttpServer())
+          .post("/api/v1/auth/forgot-password")
+          .set("x-forwarded-for", ip)
+          .send({ schoolSlug: "greenwood", email: "alice@greenwood.com" })
+          .expect(200);
+        existingTimes.push(performance.now() - t1);
+
+        // 2. Unknown user in existing school
+        const t2 = performance.now();
+        const resUnknownUser = await request(app.getHttpServer())
+          .post("/api/v1/auth/forgot-password")
+          .set("x-forwarded-for", ip)
+          .send({ schoolSlug: "greenwood", email })
+          .expect(200);
+        unknownUserTimes.push(performance.now() - t2);
+
+        // 3. Unknown school slug
+        const t3 = performance.now();
+        const resUnknownSchool = await request(app.getHttpServer())
+          .post("/api/v1/auth/forgot-password")
+          .set("x-forwarded-for", ip)
+          .send({ schoolSlug: "unknown-school-slug", email })
+          .expect(200);
+        unknownSchoolTimes.push(performance.now() - t3);
+
+        // Confirm identical body and status
+        expect(resExisting.body).toEqual(resUnknownUser.body);
+        expect(resUnknownUser.body).toEqual(resUnknownSchool.body);
+      }
+
+      const avgExisting = existingTimes.reduce((a, b) => a + b, 0) / existingTimes.length;
+      const avgUnknownUser = unknownUserTimes.reduce((a, b) => a + b, 0) / unknownUserTimes.length;
+      const avgUnknownSchool =
+        unknownSchoolTimes.reduce((a, b) => a + b, 0) / unknownSchoolTimes.length;
+
+      // Loose tolerance: ratios within 4x to accommodate CI virtualization jitter
+      expect(avgExisting).toBeGreaterThan(0);
+      expect(avgUnknownUser).toBeGreaterThan(0);
+      expect(avgUnknownSchool).toBeGreaterThan(0);
+      expect(avgUnknownUser / avgExisting).toBeLessThan(4);
+      expect(avgExisting / avgUnknownUser).toBeLessThan(4);
+      expect(avgUnknownSchool / avgExisting).toBeLessThan(4);
+      expect(avgExisting / avgUnknownSchool).toBeLessThan(4);
+    });
   });
 
   describe("20. Zero Tokens, Secrets and Passwords in Logs (Phase 12b-1)", () => {
