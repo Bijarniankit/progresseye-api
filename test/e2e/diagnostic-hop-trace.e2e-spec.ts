@@ -8,9 +8,14 @@ describe("Diagnostic Hop Trace E2E", () => {
   let app: NestFastifyApplication;
   let config: AppConfigService;
 
+  const prevAppEnv = process.env.APP_ENV;
+  const prevDiagnostics = process.env.DIAGNOSTICS_ENABLED;
+  const prevPublicUrl = process.env.APP_PUBLIC_URL;
+
   beforeAll(async () => {
     process.env.DIAGNOSTICS_ENABLED = "true";
     process.env.APP_ENV = "staging";
+    process.env.APP_PUBLIC_URL = "https://staging.progresseye.com";
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -26,7 +31,12 @@ describe("Diagnostic Hop Trace E2E", () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    if (app) {
+      await app.close();
+    }
+    process.env.APP_ENV = prevAppEnv;
+    process.env.DIAGNOSTICS_ENABLED = prevDiagnostics;
+    process.env.APP_PUBLIC_URL = prevPublicUrl;
   });
 
   it("returns clientReportedHops, hash prefixes, and NEVER leaks raw client IP", async () => {
