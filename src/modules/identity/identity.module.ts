@@ -10,6 +10,7 @@ import { TokenService } from "./domain/token.service";
 import { AuthController } from "./http/auth.controller";
 import { JwtAuthGuard } from "./http/guards/jwt-auth.guard";
 import { TenantContextInterceptor } from "./http/interceptors/tenant-context.interceptor";
+import { AuthEmailNotificationService } from "./infra/auth-email-notification.service";
 import { SessionRepository } from "./infra/session.repository";
 
 @Module({
@@ -20,10 +21,18 @@ import { SessionRepository } from "./infra/session.repository";
     TokenService,
     AbusePreventionService,
     SessionRepository,
+    AuthEmailNotificationService,
     AuthService,
     JwtAuthGuard,
     TenantContextInterceptor,
   ],
-  exports: [AuthService, TokenService, PasswordService, JwtAuthGuard, TenantContextInterceptor],
+  exports: [
+    AuthService,
+    TokenService,
+    PasswordService,
+    JwtAuthGuard,
+    TenantContextInterceptor,
+    AuthEmailNotificationService,
+  ],
 })
 export class IdentityModule {}

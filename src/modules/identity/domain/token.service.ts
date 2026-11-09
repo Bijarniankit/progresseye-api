@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { Injectable, UnauthorizedException } from "@nestjs/common";
+import { BadRequestException, Injectable, UnauthorizedException } from "@nestjs/common";
 import { jwtVerify, SignJWT } from "jose";
 import { AppConfigService } from "../../../config/config.service";
 
@@ -7,6 +7,7 @@ export interface AccessTokenClaims {
   sub: string; // userId
   schoolId: string;
   sessionId: string;
+  scope?: string;
   iat?: number;
   exp?: number;
 }
@@ -66,6 +67,63 @@ export class TokenService {
   }
 
   /**
+   * Generates a cryptographically strong 32-byte hex lifecycle token (password reset or email verification).
+   */
+  generateLifecycleToken(): string {
+    return crypto.randomBytes(32).toString("hex");
+  }
+
+  /**
+   * Builds the compound lifecycle token format (<schoolId>.<rawToken>).
+   */
+  buildCompoundLifecycleToken(schoolId: string, rawToken: string): string {
+    return `${schoolId}.${rawToken}`;
+  }
+
+  /**
+   * Parses and validates a compound lifecycle token string.
+   */
+  parseCompoundLifecycleToken(compound: string): { schoolId: string; rawToken: string } {
+    if (!compound || typeof compound !== "string") {
+      throw new BadRequestException("Token is required");
+    }
+    const dotIndex = compound.indexOf(".");
+    if (dotIndex === -1) {
+      throw new BadRequestException("Invalid or expired token structure");
+    }
+    const schoolId = compound.slice(0, dotIndex).trim();
+    const rawToken = compound.slice(dotIndex + 1).trim();
+
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!schoolId || !rawToken || !uuidRegex.test(schoolId)) {
+      throw new BadRequestException("Invalid or expired token format");
+    }
+
+    return { schoolId, rawToken };
+  }
+
+  /**
+   * Signs a 15-minute temporary token restricted to first-login password change.
+   */
+  async createTemporaryPasswordChangeToken(claims: {
+    userId: string;
+    schoolId: string;
+  }): Promise<{ token: string; expiresIn: number }> {
+    const expiresInSeconds = 15 * 60; // 15 minutes
+    const token = await new SignJWT({
+      schoolId: claims.schoolId,
+      scope: "pwd_change_pending",
+    })
+      .setSubject(claims.userId)
+      .setProtectedHeader({ alg: "HS256", kid: this.jwtKid })
+      .setIssuedAt()
+      .setExpirationTime(`${expiresInSeconds}s`)
+      .sign(this.jwtSecret);
+
+    return { token, expiresIn: expiresInSeconds };
+  }
+
+  /**
    * Signs a 15-minute access token via jose with HS256 and key id.
    */
   async createAccessToken(claims: {
@@ -77,6 +135,7 @@ export class TokenService {
     const token = await new SignJWT({
       schoolId: claims.schoolId,
       sessionId: claims.sessionId,
+      scope: "access",
     })
       .setSubject(claims.userId)
       .setProtectedHeader({ alg: "HS256", kid: this.jwtKid })
@@ -96,7 +155,23 @@ export class TokenService {
         algorithms: ["HS256"],
       });
 
-      if (!payload.sub || !payload.schoolId || !payload.sessionId) {
+      if (!payload.sub || !payload.schoolId) {
+        throw new UnauthorizedException("Invalid token payload claims");
+      }
+
+      const scope = (payload.scope as string) || "access";
+      if (scope === "pwd_change_pending") {
+        return {
+          sub: payload.sub,
+          schoolId: payload.schoolId as string,
+          sessionId: "pwd_change_pending",
+          scope,
+          iat: payload.iat,
+          exp: payload.exp,
+        };
+      }
+
+      if (!payload.sessionId) {
         throw new UnauthorizedException("Invalid token payload claims");
       }
 
@@ -104,6 +179,7 @@ export class TokenService {
         sub: payload.sub,
         schoolId: payload.schoolId as string,
         sessionId: payload.sessionId as string,
+        scope,
         iat: payload.iat,
         exp: payload.exp,
       };

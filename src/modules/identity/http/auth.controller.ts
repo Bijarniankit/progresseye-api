@@ -19,11 +19,22 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { ZodValidationPipe } from "../../../common/pipes/zod-validation.pipe";
 import { AppConfigService } from "../../../config/config.service";
 import { AuthService } from "../application/auth.service";
-import { LoginResponseDto, RefreshResponseDto, SessionListDto } from "../dto/auth-response.dto";
+import { TokenService } from "../domain/token.service";
+import {
+  GenericMessageResponseDto,
+  LoginResponseDto,
+  RefreshResponseDto,
+  SessionListDto,
+} from "../dto/auth-response.dto";
 import { ChangePasswordDto, ChangePasswordSchema } from "../dto/change-password.dto";
+import { FirstLoginPasswordDto, FirstLoginPasswordSchema } from "../dto/first-login-password.dto";
+import { ForgotPasswordDto, ForgotPasswordSchema } from "../dto/forgot-password.dto";
 import { LoginDto, LoginSchema } from "../dto/login.dto";
 import { PasswordStrengthDto, PasswordStrengthSchema } from "../dto/password-strength.dto";
 import { RefreshDto, RefreshSchema } from "../dto/refresh.dto";
+import { ResendVerificationDto, ResendVerificationSchema } from "../dto/resend-verification.dto";
+import { ResetPasswordDto, ResetPasswordSchema } from "../dto/reset-password.dto";
+import { VerifyEmailDto, VerifyEmailSchema } from "../dto/verify-email.dto";
 import { CurrentUser } from "./decorators/current-user.decorator";
 import { type AuthenticatedUser, JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { TenantContextInterceptor } from "./interceptors/tenant-context.interceptor";
@@ -35,6 +46,7 @@ export class AuthController {
 
   constructor(
     private readonly authService: AuthService,
+    private readonly tokenService: TokenService,
     private readonly config: AppConfigService,
   ) {
     this.isProd =
@@ -64,8 +76,17 @@ export class AuthController {
       userAgent,
     });
 
+    if (result.mustChangePassword) {
+      return {
+        mustChangePassword: true,
+        temporaryToken: result.temporaryToken,
+        expiresIn: result.expiresIn,
+        user: result.user,
+      };
+    }
+
     // Set HTTP-only refresh cookie (no Partitioned per Amendment 5)
-    res.setCookie("pe_refresh_token", result.compoundRefreshToken, {
+    res.setCookie("pe_refresh_token", result.compoundRefreshToken!, {
       path: "/api/v1/auth",
       httpOnly: true,
       secure: this.isProd,
@@ -240,5 +261,99 @@ export class AuthController {
   @ApiOperation({ summary: "Evaluate password strength and return feedback" })
   passwordStrength(@Body(new ZodValidationPipe(PasswordStrengthSchema)) dto: PasswordStrengthDto) {
     return this.authService.evaluatePasswordStrength(dto.password, dto.userInputs);
+  }
+
+  @Post("first-login-password")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Forced password change upon first login" })
+  @ApiResponse({ status: 200, type: LoginResponseDto })
+  async firstLoginPassword(
+    @Body(new ZodValidationPipe(FirstLoginPasswordSchema)) dto: FirstLoginPasswordDto,
+    @Req() req: FastifyRequest,
+    @Res({ passthrough: true }) res: FastifyReply,
+  ): Promise<LoginResponseDto> {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      throw new UnauthorizedException("Authorization header is required");
+    }
+    const token = authHeader.slice(7).trim();
+    const claims = await this.tokenService.verifyAccessToken(token);
+
+    const clientIp = req.ip || "127.0.0.1";
+    const userAgent = req.headers["user-agent"];
+    const isMobile =
+      req.headers["x-client-type"] === "mobile" || req.headers["X-Client-Type"] === "mobile";
+
+    const result = await this.authService.firstLoginPassword(
+      { userId: claims.sub, schoolId: claims.schoolId, scope: claims.scope },
+      dto,
+      {
+        ip: clientIp,
+        userAgent,
+        clientType: isMobile ? "mobile" : "web",
+      },
+    );
+
+    res.setCookie("pe_refresh_token", result.compoundRefreshToken, {
+      path: "/api/v1/auth",
+      httpOnly: true,
+      secure: this.isProd,
+      sameSite: "lax",
+      maxAge: 30 * 24 * 60 * 60,
+    });
+
+    return {
+      accessToken: result.accessToken,
+      expiresIn: result.expiresIn,
+      user: result.user,
+      refreshToken: isMobile ? result.compoundRefreshToken : undefined,
+    };
+  }
+
+  @Post("forgot-password")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Request password reset email link" })
+  @ApiResponse({ status: 200, type: GenericMessageResponseDto })
+  async forgotPassword(
+    @Body(new ZodValidationPipe(ForgotPasswordSchema)) dto: ForgotPasswordDto,
+    @Req() req: FastifyRequest,
+  ): Promise<GenericMessageResponseDto> {
+    const clientIp = req.ip || "127.0.0.1";
+    const userAgent = req.headers["user-agent"];
+    return this.authService.forgotPassword(dto, { ip: clientIp, userAgent });
+  }
+
+  @Post("reset-password")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Reset password using single-use compound token" })
+  @ApiResponse({ status: 200, type: GenericMessageResponseDto })
+  async resetPassword(
+    @Body(new ZodValidationPipe(ResetPasswordSchema)) dto: ResetPasswordDto,
+    @Req() req: FastifyRequest,
+  ): Promise<GenericMessageResponseDto> {
+    const clientIp = req.ip || "127.0.0.1";
+    return this.authService.resetPassword(dto, { ip: clientIp });
+  }
+
+  @Post("verify-email")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Verify email using compound token" })
+  @ApiResponse({ status: 200, type: GenericMessageResponseDto })
+  async verifyEmail(
+    @Body(new ZodValidationPipe(VerifyEmailSchema)) dto: VerifyEmailDto,
+  ): Promise<GenericMessageResponseDto> {
+    return this.authService.verifyEmail(dto);
+  }
+
+  @Post("verify-email/resend")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Resend email verification link" })
+  @ApiResponse({ status: 200, type: GenericMessageResponseDto })
+  async resendVerification(
+    @Body(new ZodValidationPipe(ResendVerificationSchema)) dto: ResendVerificationDto,
+    @Req() req: FastifyRequest,
+  ): Promise<GenericMessageResponseDto> {
+    const clientIp = req.ip || "127.0.0.1";
+    return this.authService.resendVerification(dto, { ip: clientIp });
   }
 }

@@ -12,6 +12,7 @@ export const baseEnvSchema = z.object({
   PORT: z.coerce.number().default(4000),
   API_PREFIX: z.string().default("/api/v1"),
   CORS_ORIGIN: z.string().default("http://localhost:3000"),
+  APP_PUBLIC_URL: z.string().url().default("http://localhost:3000"),
 
   // Reverse Proxy configuration
   // Default is 0 (trustProxy: false) to prevent client IP spoofing when API is directly exposed.
@@ -150,6 +151,24 @@ export const envSchema = baseEnvSchema.superRefine((data, ctx) => {
         path: ["AUTH_GRACE_ENC_KEY"],
         message:
           "AUTH_GRACE_ENC_KEY must be at least 32 characters and cannot use default/weak patterns in production.",
+      });
+    }
+  }
+
+  const isProdOrStaging =
+    data.APP_ENV === "production" || data.APP_ENV === "staging" || data.NODE_ENV === "production";
+  if (isProdOrStaging) {
+    if (
+      !data.APP_PUBLIC_URL ||
+      data.APP_PUBLIC_URL.includes("localhost") ||
+      data.APP_PUBLIC_URL.includes("127.0.0.1") ||
+      data.APP_PUBLIC_URL.includes("0.0.0.0")
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["APP_PUBLIC_URL"],
+        message:
+          "APP_PUBLIC_URL cannot be missing, empty, or point at localhost/127.0.0.1 in production or staging environments.",
       });
     }
   }

@@ -38,6 +38,7 @@ describe("Environment Configuration Validation", () => {
         APP_ENV: "staging",
         DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/staging_db",
         DIAGNOSTICS_ENABLED: "true",
+        APP_PUBLIC_URL: "https://staging.progresseye.com",
       });
       expect(env.DIAGNOSTICS_ENABLED).toBe(true);
     });
@@ -64,6 +65,7 @@ describe("Environment Configuration Validation", () => {
       AUTH_JWT_SECRET: "prod-secure-random-32char-token-signing-key-sample",
       AUTH_LOG_HMAC_SECRET: "prod-secure-hmac-salt-key-sample",
       AUTH_GRACE_ENC_KEY: "prod-secure-random-32char-grace-encryption-key-sample",
+      APP_PUBLIC_URL: "https://app.progresseye.com",
     };
 
     it("should reject startup in production if TURNSTILE_ENABLED is not 'true'", () => {
@@ -223,6 +225,60 @@ describe("Environment Configuration Validation", () => {
       });
       expect(env.HSTS_INCLUDE_SUBDOMAINS).toBeUndefined();
       expect(env.HSTS_PRELOAD).toBeUndefined();
+    });
+  });
+
+  describe("APP_PUBLIC_URL Configuration & Production/Staging Guard", () => {
+    it("should default to http://localhost:3000 in development", () => {
+      const env = validateEnv({
+        DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/test_db",
+      });
+      expect(env.APP_PUBLIC_URL).toBe("http://localhost:3000");
+    });
+
+    it("should reject APP_PUBLIC_URL pointing at localhost in production", () => {
+      expect(() =>
+        validateEnv({
+          APP_ENV: "production",
+          NODE_ENV: "production",
+          DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/prod_db",
+          AUTH_JWT_SECRET: "prod-secure-random-32char-token-signing-key-sample",
+          AUTH_LOG_HMAC_SECRET: "prod-secure-hmac-salt-key-sample",
+          AUTH_GRACE_ENC_KEY: "prod-secure-random-32char-grace-encryption-key-sample",
+          TURNSTILE_ENABLED: "true",
+          TURNSTILE_SECRET_KEY: "0x4AAAAAAAxRealCloudflareSecretKeyExample",
+          APP_PUBLIC_URL: "http://localhost:3000",
+        }),
+      ).toThrow(
+        /APP_PUBLIC_URL cannot be missing, empty, or point at localhost\/127.0.0.1 in production or staging/,
+      );
+    });
+
+    it("should reject APP_PUBLIC_URL pointing at localhost in staging", () => {
+      expect(() =>
+        validateEnv({
+          APP_ENV: "staging",
+          DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/staging_db",
+          AUTH_JWT_SECRET: "staging-secure-random-32char-token-signing-key",
+          AUTH_LOG_HMAC_SECRET: "staging-secure-hmac-salt-key-sample",
+          AUTH_GRACE_ENC_KEY: "staging-secure-random-32char-grace-enc-key",
+          APP_PUBLIC_URL: "http://127.0.0.1:3000",
+        }),
+      ).toThrow(
+        /APP_PUBLIC_URL cannot be missing, empty, or point at localhost\/127.0.0.1 in production or staging/,
+      );
+    });
+
+    it("should accept valid public HTTPS URL in production and staging", () => {
+      const env = validateEnv({
+        APP_ENV: "staging",
+        DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/staging_db",
+        AUTH_JWT_SECRET: "staging-secure-random-32char-token-signing-key",
+        AUTH_LOG_HMAC_SECRET: "staging-secure-hmac-salt-key-sample",
+        AUTH_GRACE_ENC_KEY: "staging-secure-random-32char-grace-enc-key",
+        APP_PUBLIC_URL: "https://staging.progresseye.com",
+      });
+      expect(env.APP_PUBLIC_URL).toBe("https://staging.progresseye.com");
     });
   });
 });

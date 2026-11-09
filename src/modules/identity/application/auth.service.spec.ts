@@ -10,6 +10,7 @@ import { AppConfigService } from "../../../config/config.service";
 import { AbusePreventionService } from "../domain/abuse-prevention.service";
 import { PasswordService } from "../domain/password.service";
 import { TokenService } from "../domain/token.service";
+import { AuthEmailNotificationService } from "../infra/auth-email-notification.service";
 import { SessionRepository } from "../infra/session.repository";
 import { AuthService } from "./auth.service";
 
@@ -19,6 +20,7 @@ describe("AuthService", () => {
   let mockPasswordService: Partial<jest.Mocked<PasswordService>>;
   let mockTokenService: Partial<jest.Mocked<TokenService>>;
   let mockAbuseService: Partial<jest.Mocked<AbusePreventionService>>;
+  let mockEmailNotificationService: Partial<jest.Mocked<AuthEmailNotificationService>>;
   let mockConfig: { get: jest.Mock };
 
   const schoolId = "018f0000-0000-7000-8000-000000000001";
@@ -50,6 +52,12 @@ describe("AuthService", () => {
       revokeSessionById: jest.fn(),
       revokeOtherUserSessions: jest.fn(),
       updateUserPassword: jest.fn(),
+      createPasswordResetToken: jest.fn(),
+      findPasswordResetToken: jest.fn(),
+      markPasswordResetTokenUsed: jest.fn(),
+      createEmailVerificationToken: jest.fn(),
+      findEmailVerificationToken: jest.fn(),
+      markEmailVerified: jest.fn(),
       recordAuditLog: jest.fn(),
     };
 
@@ -57,8 +65,8 @@ describe("AuthService", () => {
       hash: jest.fn(),
       verify: jest.fn(),
       verifyDummy: jest.fn(),
-      validatePolicy: jest.fn(),
-      evaluateStrength: jest.fn(),
+      validatePolicy: jest.fn().mockReturnValue({ valid: true }),
+      evaluateStrength: jest.fn().mockReturnValue({ score: 4, warning: null, suggestions: [] }),
     };
 
     mockTokenService = {
@@ -69,6 +77,15 @@ describe("AuthService", () => {
         schoolId,
         rawToken: "raw-refresh-token-123",
       }),
+      generateLifecycleToken: jest.fn().mockReturnValue("raw-lifecycle-token-456"),
+      buildCompoundLifecycleToken: jest.fn().mockReturnValue(`${schoolId}.raw-lifecycle-token-456`),
+      parseCompoundLifecycleToken: jest.fn().mockReturnValue({
+        schoolId,
+        rawToken: "raw-lifecycle-token-456",
+      }),
+      createTemporaryPasswordChangeToken: jest
+        .fn()
+        .mockResolvedValue({ token: "temp-pwd-jwt", expiresIn: 900 }),
       createAccessToken: jest.fn().mockResolvedValue({ token: "jwt-access-token", expiresIn: 900 }),
       verifyAccessToken: jest.fn(),
     };
@@ -80,6 +97,17 @@ describe("AuthService", () => {
       cacheSuccessorToken: jest.fn().mockResolvedValue(undefined),
       getSuccessorToken: jest.fn().mockResolvedValue(null),
       assertRedisAvailable: jest.fn(),
+      checkForgotPasswordRateLimit: jest.fn().mockResolvedValue(undefined),
+      recordForgotPasswordAttempt: jest.fn().mockResolvedValue(undefined),
+      checkResetPasswordRateLimit: jest.fn().mockResolvedValue(undefined),
+      recordResetPasswordAttempt: jest.fn().mockResolvedValue(undefined),
+      checkResendVerificationRateLimit: jest.fn().mockResolvedValue(undefined),
+      recordResendVerificationAttempt: jest.fn().mockResolvedValue(undefined),
+    };
+
+    mockEmailNotificationService = {
+      sendPasswordResetEmail: jest.fn().mockResolvedValue(undefined),
+      sendEmailVerificationEmail: jest.fn().mockResolvedValue(undefined),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -90,6 +118,7 @@ describe("AuthService", () => {
         { provide: PasswordService, useValue: mockPasswordService },
         { provide: TokenService, useValue: mockTokenService },
         { provide: AbusePreventionService, useValue: mockAbuseService },
+        { provide: AuthEmailNotificationService, useValue: mockEmailNotificationService },
         { provide: AppConfigService, useValue: mockConfig },
       ],
     }).compile();
@@ -423,6 +452,186 @@ describe("AuthService", () => {
           { ip: "127.0.0.1" },
         ),
       ).rejects.toThrow(UnauthorizedException);
+    });
+  });
+
+  describe("Phase 12b-1: Account Lifecycle, Reset & Verification", () => {
+    describe("forgotPassword()", () => {
+      it("should return generic message when school does not exist (anti-enumeration)", async () => {
+        mockSessionRepo.findSchoolBySlug?.mockResolvedValue(null);
+
+        const result = await service.forgotPassword(
+          { schoolSlug: "unknown-school", email: "user@test.com" },
+          { ip: "127.0.0.1" },
+        );
+
+        expect(result.message).toContain("If an account matches that email");
+        expect(mockPasswordService.verifyDummy).toHaveBeenCalled();
+        expect(mockEmailNotificationService.sendPasswordResetEmail).not.toHaveBeenCalled();
+      });
+
+      it("should return generic message when user does not exist (anti-enumeration)", async () => {
+        mockSessionRepo.findSchoolBySlug?.mockResolvedValue({
+          id: schoolId,
+          slug: "test-school",
+          name: "Test School",
+          isActive: true,
+        });
+        mockSessionRepo.findUserByEmail?.mockResolvedValue(null);
+
+        const result = await service.forgotPassword(
+          { schoolSlug: "test-school", email: "nonexistent@test.com" },
+          { ip: "127.0.0.1" },
+        );
+
+        expect(result.message).toContain("If an account matches that email");
+        expect(mockPasswordService.verifyDummy).toHaveBeenCalled();
+        expect(mockEmailNotificationService.sendPasswordResetEmail).not.toHaveBeenCalled();
+      });
+
+      it("should generate reset token, enqueue email and return generic message when user exists", async () => {
+        mockSessionRepo.findSchoolBySlug?.mockResolvedValue({
+          id: schoolId,
+          slug: "test-school",
+          name: "Test School",
+          isActive: true,
+        });
+        mockSessionRepo.findUserByEmail?.mockResolvedValue({
+          id: userId,
+          schoolId,
+          email: "alice@test.com",
+          isActive: true,
+        } as any);
+
+        const result = await service.forgotPassword(
+          { schoolSlug: "test-school", email: "alice@test.com" },
+          { ip: "127.0.0.1" },
+        );
+
+        expect(result.message).toContain("If an account matches that email");
+        expect(mockSessionRepo.createPasswordResetToken).toHaveBeenCalled();
+        expect(mockEmailNotificationService.sendPasswordResetEmail).toHaveBeenCalledWith(
+          "alice@test.com",
+          `${schoolId}.raw-lifecycle-token-456`,
+        );
+      });
+    });
+
+    describe("resetPassword()", () => {
+      it("should reject invalid or expired reset token with BadRequestException", async () => {
+        mockSessionRepo.findPasswordResetToken?.mockResolvedValue(null);
+
+        await expect(
+          service.resetPassword(
+            { token: `${schoolId}.invalid-token`, newPassword: "SuperSecureNewPassword123!" },
+            { ip: "127.0.0.1" },
+          ),
+        ).rejects.toThrow("Invalid or expired reset token.");
+      });
+
+      it("should reset password, revoke all user sessions, and NEVER log the user in", async () => {
+        mockSessionRepo.findPasswordResetToken?.mockResolvedValue({
+          id: "token-uuid-1",
+          schoolId,
+          userId,
+          tokenHash: "token-hash-123",
+          expiresAt: new Date(Date.now() + 3600000),
+          usedAt: null,
+          user: { id: userId, email: "alice@test.com" },
+        } as any);
+
+        mockPasswordService.hash?.mockResolvedValue("$argon2id$new-hashed-password");
+
+        const result = await service.resetPassword(
+          { token: `${schoolId}.valid-token`, newPassword: "SuperSecureNewPassword123!" },
+          { ip: "127.0.0.1" },
+        );
+
+        expect(result.message).toContain("Password has been successfully reset");
+        expect(mockSessionRepo.markPasswordResetTokenUsed).toHaveBeenCalledWith(
+          schoolId,
+          "token-uuid-1",
+        );
+        expect(mockSessionRepo.updateUserPassword).toHaveBeenCalledWith(
+          schoolId,
+          userId,
+          "$argon2id$new-hashed-password",
+        );
+        expect(mockSessionRepo.revokeAllUserSessions).toHaveBeenCalledWith(schoolId, userId);
+        expect((result as any).accessToken).toBeUndefined();
+      });
+    });
+
+    describe("verifyEmail()", () => {
+      it("should reject invalid verification token with BadRequestException", async () => {
+        mockSessionRepo.findEmailVerificationToken?.mockResolvedValue(null);
+
+        await expect(service.verifyEmail({ token: `${schoolId}.invalid-token` })).rejects.toThrow(
+          "Invalid or expired verification token.",
+        );
+      });
+
+      it("should mark email verification token used and set email_verified_at", async () => {
+        mockSessionRepo.findEmailVerificationToken?.mockResolvedValue({
+          id: "verify-token-uuid",
+          schoolId,
+          userId,
+          tokenHash: "token-hash-123",
+          usedAt: null,
+          expiresAt: new Date(Date.now() + 86400000),
+          user: { id: userId, email: "alice@test.com" },
+        } as any);
+
+        const result = await service.verifyEmail({ token: `${schoolId}.valid-token` });
+        expect(result.message).toContain("Email has been successfully verified");
+        expect(mockSessionRepo.markEmailVerified).toHaveBeenCalledWith(
+          schoolId,
+          "verify-token-uuid",
+          userId,
+        );
+      });
+    });
+
+    describe("firstLoginPassword()", () => {
+      it("should reject tokens with scope other than pwd_change_pending or access", async () => {
+        await expect(
+          service.firstLoginPassword(
+            { userId, schoolId, scope: "invalid_scope" },
+            { newPassword: "SuperSecureNewPassword123!" },
+            { ip: "127.0.0.1" },
+          ),
+        ).rejects.toThrow(ForbiddenException);
+      });
+
+      it("should update password, clear mustChangePassword, revoke other sessions, and return new session", async () => {
+        mockSessionRepo.findUserById?.mockResolvedValue({
+          id: userId,
+          schoolId,
+          email: "alice@test.com",
+          firstName: "Alice",
+          lastName: "Alpha",
+          mustChangePassword: true,
+          userRoles: [{ role: { name: "Teacher" } }],
+        } as any);
+
+        mockSessionRepo.createSession?.mockResolvedValue({ id: "new-session-id" } as any);
+        mockPasswordService.hash?.mockResolvedValue("$argon2id$new-hash");
+
+        const result = await service.firstLoginPassword(
+          { userId, schoolId, scope: "pwd_change_pending" },
+          { newPassword: "SuperSecureNewPassword123!" },
+          { ip: "127.0.0.1" },
+        );
+
+        expect(result.accessToken).toBe("jwt-access-token");
+        expect(result.user.mustChangePassword).toBe(false);
+        expect(mockSessionRepo.updateUserPassword).toHaveBeenCalledWith(
+          schoolId,
+          userId,
+          "$argon2id$new-hash",
+        );
+        expect(mockSessionRepo.revokeAllUserSessions).toHaveBeenCalledWith(schoolId, userId);
+      });
     });
   });
 });

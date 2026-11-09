@@ -11,13 +11,21 @@ export const UserSummarySchema = z.object({
 });
 
 export const LoginResponseSchema = z.object({
-  accessToken: z.string(),
+  accessToken: z.string().optional(),
   expiresIn: z.number(),
   user: UserSummarySchema,
   refreshToken: z.string().optional(),
+  mustChangePassword: z.boolean().optional(),
+  temporaryToken: z.string().optional(),
 });
 
 export class LoginResponseDto extends createZodDto(LoginResponseSchema) {}
+
+export const GenericMessageResponseSchema = z.object({
+  message: z.string(),
+});
+
+export class GenericMessageResponseDto extends createZodDto(GenericMessageResponseSchema) {}
 
 export const RefreshResponseSchema = z.object({
   accessToken: z.string(),

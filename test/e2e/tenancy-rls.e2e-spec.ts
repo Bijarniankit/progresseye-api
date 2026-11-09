@@ -41,7 +41,7 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
 
     // Clean up any existing test entities
     await prisma.$executeRawUnsafe(
-      `TRUNCATE TABLE organizations, schools, academic_years, users, sessions, roles, permissions, role_permissions, user_roles, audit_logs, outbox_events, counters CASCADE;`,
+      `TRUNCATE TABLE organizations, schools, academic_years, users, sessions, roles, permissions, role_permissions, user_roles, audit_logs, outbox_events, counters, password_reset_tokens, email_verification_tokens CASCADE;`,
     );
 
     // Setup base organization and schools as migration owner/admin
@@ -191,6 +191,13 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
 
       const auditLogs: any[] = await appPrisma.$queryRaw`SELECT id FROM audit_logs;`;
       expect(auditLogs.length).toBe(0);
+
+      const resetTokens: any[] = await appPrisma.$queryRaw`SELECT id FROM password_reset_tokens;`;
+      expect(resetTokens.length).toBe(0);
+
+      const verifyTokens: any[] =
+        await appPrisma.$queryRaw`SELECT id FROM email_verification_tokens;`;
+      expect(verifyTokens.length).toBe(0);
 
       await appPrisma.$disconnect();
     });
@@ -560,6 +567,162 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
 
       // Verify exact sequence 1..10 without gaps or duplicates
       expect(sortedResults).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    });
+  });
+
+  describe("Test 19: Phase 12b-1 Password Reset & Email Verification Tokens RLS Isolation (Amendment 2)", () => {
+    const testResetTokenId = uuidv7();
+    const testVerifyTokenId = uuidv7();
+
+    it("should allow Tenant A to insert and read its own password reset and verification tokens", async () => {
+      await tenantContext.run({ schoolId: schoolA }, async () => {
+        const client = prisma.client;
+        await client.$executeRawUnsafe(`SET ROLE progresseye_app;`);
+
+        await client.$executeRaw`
+          INSERT INTO password_reset_tokens (id, school_id, user_id, token_hash, expires_at)
+          VALUES (${testResetTokenId}::uuid, ${schoolA}::uuid, ${userAId}::uuid, 'reset-hash-a', CURRENT_TIMESTAMP + INTERVAL '1 hour');
+        `;
+
+        await client.$executeRaw`
+          INSERT INTO email_verification_tokens (id, school_id, user_id, token_hash, expires_at)
+          VALUES (${testVerifyTokenId}::uuid, ${schoolA}::uuid, ${userAId}::uuid, 'verify-hash-a', CURRENT_TIMESTAMP + INTERVAL '24 hours');
+        `;
+
+        const resetTokens: any[] = await client.$queryRaw`
+          SELECT id, token_hash FROM password_reset_tokens WHERE id = ${testResetTokenId}::uuid;
+        `;
+        expect(resetTokens.length).toBe(1);
+        expect(resetTokens[0].token_hash).toBe("reset-hash-a");
+
+        const verifyTokens: any[] = await client.$queryRaw`
+          SELECT id, token_hash FROM email_verification_tokens WHERE id = ${testVerifyTokenId}::uuid;
+        `;
+        expect(verifyTokens.length).toBe(1);
+        expect(verifyTokens[0].token_hash).toBe("verify-hash-a");
+
+        await client.$executeRawUnsafe(`RESET ROLE;`);
+      });
+    });
+
+    it("should prevent Tenant B from reading Tenant A reset or verification tokens (cross-tenant read isolation)", async () => {
+      await tenantContext.run({ schoolId: schoolB }, async () => {
+        const client = prisma.client;
+        await client.$executeRawUnsafe(`SET ROLE progresseye_app;`);
+
+        const resetTokens: any[] = await client.$queryRaw`
+          SELECT id FROM password_reset_tokens WHERE id = ${testResetTokenId}::uuid;
+        `;
+        expect(resetTokens.length).toBe(0);
+
+        const verifyTokens: any[] = await client.$queryRaw`
+          SELECT id FROM email_verification_tokens WHERE id = ${testVerifyTokenId}::uuid;
+        `;
+        expect(verifyTokens.length).toBe(0);
+
+        await client.$executeRawUnsafe(`RESET ROLE;`);
+      });
+    });
+
+    it("should reject cross-tenant inserts for reset and verification tokens (RLS WITH CHECK)", async () => {
+      const maliciousId = uuidv7();
+      await tenantContext.run({ schoolId: schoolA }, async () => {
+        const client = prisma.client;
+        await client.$executeRawUnsafe(`SET ROLE progresseye_app;`);
+
+        await expect(
+          client.$executeRaw`
+            INSERT INTO password_reset_tokens (id, school_id, user_id, token_hash, expires_at)
+            VALUES (${maliciousId}::uuid, ${schoolB}::uuid, ${userBId}::uuid, 'malicious-reset-hash', CURRENT_TIMESTAMP + INTERVAL '1 hour');
+          `,
+        ).rejects.toThrow();
+
+        await expect(
+          client.$executeRaw`
+            INSERT INTO email_verification_tokens (id, school_id, user_id, token_hash, expires_at)
+            VALUES (${maliciousId}::uuid, ${schoolB}::uuid, ${userBId}::uuid, 'malicious-verify-hash', CURRENT_TIMESTAMP + INTERVAL '24 hours');
+          `,
+        ).rejects.toThrow();
+
+        await client.$executeRawUnsafe(`RESET ROLE;`);
+      });
+    });
+
+    it("should prevent Tenant B from updating or deleting Tenant A tokens (0 rows affected)", async () => {
+      await tenantContext.run({ schoolId: schoolB }, async () => {
+        const client = prisma.client;
+        await client.$executeRawUnsafe(`SET ROLE progresseye_app;`);
+
+        const updateCount = await client.$executeRaw`
+          UPDATE password_reset_tokens
+          SET used_at = CURRENT_TIMESTAMP
+          WHERE id = ${testResetTokenId}::uuid;
+        `;
+        expect(updateCount).toBe(0);
+
+        const deleteCount = await client.$executeRaw`
+          DELETE FROM email_verification_tokens
+          WHERE id = ${testVerifyTokenId}::uuid;
+        `;
+        expect(deleteCount).toBe(0);
+
+        await client.$executeRawUnsafe(`RESET ROLE;`);
+      });
+    });
+
+    it("should reject Nil-UUID as school_id for new token tables via check constraints", async () => {
+      const nilUuid = "00000000-0000-0000-0000-000000000000";
+      const tokenUuid = uuidv7();
+
+      await expect(
+        prisma.$executeRaw`
+          INSERT INTO password_reset_tokens (id, school_id, user_id, token_hash, expires_at)
+          VALUES (${tokenUuid}::uuid, ${nilUuid}::uuid, ${userAId}::uuid, 'nil-reset-hash', CURRENT_TIMESTAMP + INTERVAL '1 hour');
+        `,
+      ).rejects.toThrow();
+
+      await expect(
+        prisma.$executeRaw`
+          INSERT INTO email_verification_tokens (id, school_id, user_id, token_hash, expires_at)
+          VALUES (${tokenUuid}::uuid, ${nilUuid}::uuid, ${userAId}::uuid, 'nil-verify-hash', CURRENT_TIMESTAMP + INTERVAL '24 hours');
+        `,
+      ).rejects.toThrow();
+    });
+
+    it("should allow progresseye_owner to view tokens across all tenants without RLS filtering", async () => {
+      const ownerPrisma = new PrismaClient({
+        datasources: { db: { url: ownerDbUrl } },
+      });
+      await ownerPrisma.$connect();
+
+      const resetTokens: any[] = await ownerPrisma.$queryRaw`
+        SELECT id FROM password_reset_tokens WHERE id = ${testResetTokenId}::uuid;
+      `;
+      expect(resetTokens.length).toBe(1);
+
+      const verifyTokens: any[] = await ownerPrisma.$queryRaw`
+        SELECT id FROM email_verification_tokens WHERE id = ${testVerifyTokenId}::uuid;
+      `;
+      expect(verifyTokens.length).toBe(1);
+
+      await ownerPrisma.$disconnect();
+    });
+
+    it("should enforce minimal role grants: progresseye_ro cannot insert into token tables", async () => {
+      await tenantContext.run({ schoolId: schoolA }, async () => {
+        const client = prisma.client;
+        await client.$executeRawUnsafe(`SET ROLE progresseye_ro;`);
+
+        const tokenUuid = uuidv7();
+        await expect(
+          client.$executeRaw`
+            INSERT INTO password_reset_tokens (id, school_id, user_id, token_hash, expires_at)
+            VALUES (${tokenUuid}::uuid, ${schoolA}::uuid, ${userAId}::uuid, 'ro-forbidden-hash', CURRENT_TIMESTAMP + INTERVAL '1 hour');
+          `,
+        ).rejects.toThrow(/permission denied/i);
+
+        await client.$executeRawUnsafe(`RESET ROLE;`);
+      });
     });
   });
 

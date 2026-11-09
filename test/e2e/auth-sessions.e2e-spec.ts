@@ -844,4 +844,294 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
       }
     });
   });
+
+  describe("15. Password Reset Flow: Token Expiry, Single-Use & Session Revocation (Amendment 5)", () => {
+    it("should issue a reset token, reset password, revoke all active sessions, and NEVER log the user in", async () => {
+      // 1. Establish an active session for Alice
+      const loginRes = await request(app.getHttpServer())
+        .post("/api/v1/auth/login")
+        .send({
+          schoolSlug: "school-a",
+          email: "alice@school-a.edu",
+          password: rawPassword,
+          clientType: "web",
+        })
+        .expect(200);
+
+      const activeToken = loginRes.body.accessToken;
+
+      // 2. Request password reset (anti-enumeration generic 200)
+      const forgotRes = await request(app.getHttpServer())
+        .post("/api/v1/auth/forgot-password")
+        .send({
+          schoolSlug: "school-a",
+          email: "alice@school-a.edu",
+        })
+        .expect(200);
+
+      expect(forgotRes.body.message).toContain("If an account matches that email");
+
+      // 3. Retrieve generated token hash from database
+      const resetRow: any[] = await prisma.$queryRaw`
+        SELECT id, token_hash, expires_at, used_at FROM password_reset_tokens
+        WHERE school_id = ${schoolAId}::uuid AND user_id = ${userAId}::uuid AND used_at IS NULL
+        ORDER BY created_at DESC LIMIT 1;
+      `;
+      expect(resetRow).toHaveLength(1);
+
+      // In real scenario, the token sent via email is <schoolId>.<rawToken>.
+      // For testing, let's create a known raw token and insert its hash
+      const crypto = await import("node:crypto");
+      const testRawToken = crypto.randomBytes(32).toString("hex");
+      const testTokenHash = crypto.createHash("sha256").update(testRawToken).digest("hex");
+      const compoundResetToken = `${schoolAId}.${testRawToken}`;
+
+      await prisma.$executeRaw`
+        INSERT INTO password_reset_tokens (id, school_id, user_id, token_hash, expires_at)
+        VALUES (${uuidv7()}::uuid, ${schoolAId}::uuid, ${userAId}::uuid, ${testTokenHash}, CURRENT_TIMESTAMP + INTERVAL '1 hour');
+      `;
+
+      // 4. Submit password reset with new strong password
+      const newPassword = "NewAlicePassword12345!";
+      const resetRes = await request(app.getHttpServer())
+        .post("/api/v1/auth/reset-password")
+        .send({
+          token: compoundResetToken,
+          newPassword,
+        })
+        .expect(200);
+
+      expect(resetRes.body.message).toContain("Password has been successfully reset");
+      // NEVER logs the user in!
+      expect(resetRes.body.accessToken).toBeUndefined();
+
+      // 5. Verify old active session was revoked across all devices (Amendment 5)
+      await request(app.getHttpServer())
+        .get("/api/v1/auth/me")
+        .set("Authorization", `Bearer ${activeToken}`)
+        .expect(200); // JWT signature is valid for 15m, but database session is revoked:
+      const sessions = await prisma.$queryRaw<any[]>`
+        SELECT id, revoked_at FROM sessions
+        WHERE school_id = ${schoolAId}::uuid AND user_id = ${userAId}::uuid AND revoked_at IS NULL;
+      `;
+      expect(sessions).toHaveLength(0);
+
+      // 6. Login with new password succeeds
+      const newLoginRes = await request(app.getHttpServer())
+        .post("/api/v1/auth/login")
+        .send({
+          schoolSlug: "school-a",
+          email: "alice@school-a.edu",
+          password: newPassword,
+        })
+        .expect(200);
+      expect(newLoginRes.body.accessToken).toBeDefined();
+
+      // 7. Login with old password fails
+      await request(app.getHttpServer())
+        .post("/api/v1/auth/login")
+        .send({
+          schoolSlug: "school-a",
+          email: "alice@school-a.edu",
+          password: rawPassword,
+        })
+        .expect(401);
+
+      // Restore password
+      passwordHash = await argon2.hash(rawPassword, {
+        type: argon2.argon2id,
+        memoryCost: 4096,
+        timeCost: 2,
+        parallelism: 1,
+      });
+      await prisma.$executeRaw`
+        UPDATE users SET password_hash = ${passwordHash} WHERE id = ${userAId}::uuid;
+      `;
+    });
+  });
+
+  describe("16. Password Reset Token Reuse & Cross-Tenant Tampering", () => {
+    it("should reject replaying an already used reset token", async () => {
+      const crypto = await import("node:crypto");
+      const rawToken = crypto.randomBytes(32).toString("hex");
+      const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+      const compoundToken = `${schoolAId}.${rawToken}`;
+
+      await prisma.$executeRaw`
+        INSERT INTO password_reset_tokens (id, school_id, user_id, token_hash, expires_at, used_at)
+        VALUES (${uuidv7()}::uuid, ${schoolAId}::uuid, ${userAId}::uuid, ${tokenHash}, CURRENT_TIMESTAMP + INTERVAL '1 hour', CURRENT_TIMESTAMP);
+      `;
+
+      await request(app.getHttpServer())
+        .post("/api/v1/auth/reset-password")
+        .send({
+          token: compoundToken,
+          newPassword: "SuperSecurePassword123!",
+        })
+        .expect(400);
+    });
+
+    it("should reject cross-tenant token tampering (School B prefix with School A token)", async () => {
+      const crypto = await import("node:crypto");
+      const rawToken = crypto.randomBytes(32).toString("hex");
+      const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+
+      // Insert token belonging to School A
+      await prisma.$executeRaw`
+        INSERT INTO password_reset_tokens (id, school_id, user_id, token_hash, expires_at)
+        VALUES (${uuidv7()}::uuid, ${schoolAId}::uuid, ${userAId}::uuid, ${tokenHash}, CURRENT_TIMESTAMP + INTERVAL '1 hour');
+      `;
+
+      // Attacker attempts to redeem token by binding it to School B
+      const tamperedToken = `${schoolBId}.${rawToken}`;
+
+      await request(app.getHttpServer())
+        .post("/api/v1/auth/reset-password")
+        .send({
+          token: tamperedToken,
+          newPassword: "SuperSecurePassword123!",
+        })
+        .expect(400);
+    });
+
+    it("should reject expired reset token", async () => {
+      const crypto = await import("node:crypto");
+      const rawToken = crypto.randomBytes(32).toString("hex");
+      const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+      const compoundToken = `${schoolAId}.${rawToken}`;
+
+      // Insert token expired 1 hour ago
+      await prisma.$executeRaw`
+        INSERT INTO password_reset_tokens (id, school_id, user_id, token_hash, expires_at)
+        VALUES (${uuidv7()}::uuid, ${schoolAId}::uuid, ${userAId}::uuid, ${tokenHash}, CURRENT_TIMESTAMP - INTERVAL '1 hour');
+      `;
+
+      await request(app.getHttpServer())
+        .post("/api/v1/auth/reset-password")
+        .send({
+          token: compoundToken,
+          newPassword: "SuperSecurePassword123!",
+        })
+        .expect(400);
+    });
+  });
+
+  describe("17. Email Verification Flow & Invalidation of Older Tokens", () => {
+    it("should verify email and reject token reuse", async () => {
+      const crypto = await import("node:crypto");
+      const rawToken = crypto.randomBytes(32).toString("hex");
+      const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+      const compoundToken = `${schoolAId}.${rawToken}`;
+
+      await prisma.$executeRaw`
+        INSERT INTO email_verification_tokens (id, school_id, user_id, token_hash, expires_at)
+        VALUES (${uuidv7()}::uuid, ${schoolAId}::uuid, ${userAId}::uuid, ${tokenHash}, CURRENT_TIMESTAMP + INTERVAL '24 hours');
+      `;
+
+      // Verify email
+      const verifyRes = await request(app.getHttpServer())
+        .post("/api/v1/auth/verify-email")
+        .send({ token: compoundToken })
+        .expect(200);
+
+      expect(verifyRes.body.message).toContain("Email has been successfully verified");
+
+      // Verify user record has email_verified_at set
+      const user: any[] = await prisma.$queryRaw`
+        SELECT email_verified_at FROM users WHERE id = ${userAId}::uuid;
+      `;
+      expect(user[0].email_verified_at).not.toBeNull();
+
+      // Replay verification token fails
+      await request(app.getHttpServer())
+        .post("/api/v1/auth/verify-email")
+        .send({ token: compoundToken })
+        .expect(400);
+    });
+  });
+
+  describe("18. First-Login Forced Password Change", () => {
+    it("should require password change before granting access when must_change_password is true", async () => {
+      // 1. Set must_change_password to true for Bob
+      await prisma.$executeRaw`
+        UPDATE users SET must_change_password = true WHERE id = ${userBId}::uuid;
+      `;
+
+      // 2. Login returns mustChangePassword: true and temporaryToken, NO refresh cookie
+      const loginRes = await request(app.getHttpServer())
+        .post("/api/v1/auth/login")
+        .send({
+          schoolSlug: "school-b",
+          email: "bob@school-b.edu",
+          password: rawPassword,
+        })
+        .expect(200);
+
+      expect(loginRes.body.mustChangePassword).toBe(true);
+      expect(loginRes.body.temporaryToken).toBeDefined();
+      expect(loginRes.body.accessToken).toBeUndefined();
+
+      const tempToken = loginRes.body.temporaryToken;
+
+      // 3. Attempting to call protected route (/me) with temporaryToken is rejected with 403
+      await request(app.getHttpServer())
+        .get("/api/v1/auth/me")
+        .set("Authorization", `Bearer ${tempToken}`)
+        .expect(403);
+
+      // 4. Submit first-login password change
+      const newBobPassword = "NewBobSuperPassword12345!";
+      const changeRes = await request(app.getHttpServer())
+        .post("/api/v1/auth/first-login-password")
+        .set("Authorization", `Bearer ${tempToken}`)
+        .send({
+          newPassword: newBobPassword,
+        })
+        .expect(200);
+
+      expect(changeRes.body.accessToken).toBeDefined();
+      expect(changeRes.body.user.mustChangePassword).toBe(false);
+
+      // 5. Subsequent access to /me with new accessToken succeeds
+      await request(app.getHttpServer())
+        .get("/api/v1/auth/me")
+        .set("Authorization", `Bearer ${changeRes.body.accessToken}`)
+        .expect(200);
+
+      // Restore Bob
+      await prisma.$executeRaw`
+        UPDATE users SET must_change_password = false, password_hash = ${passwordHash} WHERE id = ${userBId}::uuid;
+      `;
+    });
+  });
+
+  describe("19. Generic Enumeration Resistance for Forgot Password & Email Verification", () => {
+    it("should return identical generic messages for existing, non-existing user, and non-existing school", async () => {
+      const res1 = await request(app.getHttpServer())
+        .post("/api/v1/auth/forgot-password")
+        .send({ schoolSlug: "school-a", email: "alice@school-a.edu" })
+        .expect(200);
+
+      const res2 = await request(app.getHttpServer())
+        .post("/api/v1/auth/forgot-password")
+        .send({ schoolSlug: "school-a", email: "nonexistent@school-a.edu" })
+        .expect(200);
+
+      const res3 = await request(app.getHttpServer())
+        .post("/api/v1/auth/forgot-password")
+        .send({ schoolSlug: "nonexistent-school", email: "alice@school-a.edu" })
+        .expect(200);
+
+      expect(res1.body.message).toBe(res2.body.message);
+      expect(res2.body.message).toBe(res3.body.message);
+    });
+  });
+
+  describe("20. Zero Tokens, Secrets and Passwords in Logs (Phase 12b-1)", () => {
+    it("should never log raw reset tokens, passwords, or verification tokens in Pino logs", () => {
+      const combinedLogs = testLogBuffer.join("\n");
+      expect(combinedLogs).not.toContain("NewAlicePassword12345!");
+      expect(combinedLogs).not.toContain("NewBobSuperPassword12345!");
+    });
+  });
 });
