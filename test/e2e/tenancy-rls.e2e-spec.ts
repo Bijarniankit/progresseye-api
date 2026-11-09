@@ -689,21 +689,45 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
       ).rejects.toThrow();
     });
 
-    it("should allow progresseye_owner to view tokens across all tenants without RLS filtering", async () => {
+    it("should enforce FORCE RLS even on progresseye_owner (fail-closed without tenant context, scoped with tenant context)", async () => {
       const ownerPrisma = new PrismaClient({
         datasources: { db: { url: ownerDbUrl } },
       });
       await ownerPrisma.$connect();
 
-      const resetTokens: any[] = await ownerPrisma.$queryRaw`
+      // Query with empty context: returns 0 rows (FORCE RLS enforces fail-closed against owner)
+      const emptyReset: any[] = await ownerPrisma.$queryRaw`
         SELECT id FROM password_reset_tokens WHERE id = ${testResetTokenId}::uuid;
       `;
-      expect(resetTokens.length).toBe(1);
+      expect(emptyReset.length).toBe(0);
 
-      const verifyTokens: any[] = await ownerPrisma.$queryRaw`
+      const emptyVerify: any[] = await ownerPrisma.$queryRaw`
         SELECT id FROM email_verification_tokens WHERE id = ${testVerifyTokenId}::uuid;
       `;
-      expect(verifyTokens.length).toBe(1);
+      expect(emptyVerify.length).toBe(0);
+
+      // Query with Tenant A context: sees Tenant A tokens
+      await ownerPrisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT set_config('app.current_school_id', ${schoolA}, true);`;
+        const resetTokens: any[] = await tx.$queryRaw`
+          SELECT id FROM password_reset_tokens WHERE id = ${testResetTokenId}::uuid;
+        `;
+        expect(resetTokens.length).toBe(1);
+
+        const verifyTokens: any[] = await tx.$queryRaw`
+          SELECT id FROM email_verification_tokens WHERE id = ${testVerifyTokenId}::uuid;
+        `;
+        expect(verifyTokens.length).toBe(1);
+      });
+
+      // Query with Tenant B context: sees 0 rows for Tenant A tokens
+      await ownerPrisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT set_config('app.current_school_id', ${schoolB}, true);`;
+        const resetTokens: any[] = await tx.$queryRaw`
+          SELECT id FROM password_reset_tokens WHERE id = ${testResetTokenId}::uuid;
+        `;
+        expect(resetTokens.length).toBe(0);
+      });
 
       await ownerPrisma.$disconnect();
     });

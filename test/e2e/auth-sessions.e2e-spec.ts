@@ -851,8 +851,8 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
       const loginRes = await request(app.getHttpServer())
         .post("/api/v1/auth/login")
         .send({
-          schoolSlug: "school-a",
-          email: "alice@school-a.edu",
+          schoolSlug: "greenwood",
+          email: "alice@greenwood.com",
           password: rawPassword,
           clientType: "web",
         })
@@ -864,8 +864,8 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
       const forgotRes = await request(app.getHttpServer())
         .post("/api/v1/auth/forgot-password")
         .send({
-          schoolSlug: "school-a",
-          email: "alice@school-a.edu",
+          schoolSlug: "greenwood",
+          email: "alice@greenwood.com",
         })
         .expect(200);
 
@@ -920,8 +920,8 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
       const newLoginRes = await request(app.getHttpServer())
         .post("/api/v1/auth/login")
         .send({
-          schoolSlug: "school-a",
-          email: "alice@school-a.edu",
+          schoolSlug: "greenwood",
+          email: "alice@greenwood.com",
           password: newPassword,
         })
         .expect(200);
@@ -931,8 +931,8 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
       await request(app.getHttpServer())
         .post("/api/v1/auth/login")
         .send({
-          schoolSlug: "school-a",
-          email: "alice@school-a.edu",
+          schoolSlug: "greenwood",
+          email: "alice@greenwood.com",
           password: rawPassword,
         })
         .expect(401);
@@ -1061,8 +1061,8 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
       const loginRes = await request(app.getHttpServer())
         .post("/api/v1/auth/login")
         .send({
-          schoolSlug: "school-b",
-          email: "bob@school-b.edu",
+          schoolSlug: "oakridge",
+          email: "bob@oakridge.com",
           password: rawPassword,
         })
         .expect(200);
@@ -1109,17 +1109,17 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
     it("should return identical generic messages for existing, non-existing user, and non-existing school", async () => {
       const res1 = await request(app.getHttpServer())
         .post("/api/v1/auth/forgot-password")
-        .send({ schoolSlug: "school-a", email: "alice@school-a.edu" })
+        .send({ schoolSlug: "greenwood", email: "alice@greenwood.com" })
         .expect(200);
 
       const res2 = await request(app.getHttpServer())
         .post("/api/v1/auth/forgot-password")
-        .send({ schoolSlug: "school-a", email: "nonexistent@school-a.edu" })
+        .send({ schoolSlug: "greenwood", email: "nonexistent@greenwood.com" })
         .expect(200);
 
       const res3 = await request(app.getHttpServer())
         .post("/api/v1/auth/forgot-password")
-        .send({ schoolSlug: "nonexistent-school", email: "alice@school-a.edu" })
+        .send({ schoolSlug: "nonexistent-school", email: "alice@greenwood.com" })
         .expect(200);
 
       expect(res1.body.message).toBe(res2.body.message);
