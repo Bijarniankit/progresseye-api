@@ -2,7 +2,7 @@ import * as crypto from "node:crypto";
 import { ServiceUnavailableException } from "@nestjs/common";
 import type { AppConfigService } from "../../../config/config.service";
 import type { RedisService } from "../../../infra/redis/redis.service";
-import { base32Decode, base32Encode, generateHotp, TotpService } from "./totp.service";
+import { TotpService, base32Decode, base32Encode } from "./totp.service";
 
 describe("TotpService", () => {
   let service: TotpService;

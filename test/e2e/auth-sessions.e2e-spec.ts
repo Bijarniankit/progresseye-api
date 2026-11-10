@@ -5,6 +5,7 @@ import { Test, type TestingModule } from "@nestjs/testing";
 import * as argon2 from "argon2";
 import type Redis from "ioredis";
 import { SignJWT } from "jose";
+import { Logger } from "nestjs-pino";
 import request from "supertest";
 import { uuidv7 } from "uuidv7";
 import { AppModule } from "../../src/app.module";
@@ -63,6 +64,7 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
     app = moduleFixture.createNestApplication<NestFastifyApplication>(
       new FastifyAdapter({ trustProxy: true }),
     );
+    app.useLogger(moduleFixture.get(Logger));
     app.setGlobalPrefix("/api/v1");
 
     await app.register(fastifyCookie as any);
@@ -1580,6 +1582,16 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
     });
 
     it("TOTP replay: rejects immediate reuse of the same TOTP code within the same step", async () => {
+      const redisService = app.get(RedisService);
+      const redisClient = redisService.getClient();
+      if (redisClient) {
+        await redisClient.del(`auth:2fa:attempts:${userAId}`);
+        const replayKeys = await redisClient.keys(`auth:totp:replay:${userAId}:*`);
+        if (replayKeys.length > 0) {
+          await redisClient.del(...replayKeys);
+        }
+      }
+
       // Alice logs in and receives temporary token with 2fa_pending scope
       const loginRes = await request(app.getHttpServer())
         .post("/api/v1/auth/login")
@@ -1622,7 +1634,9 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
         .send({ temporaryToken: loginRes2.body.temporaryToken, code })
         .expect(401);
 
-      expect(verifyRes2.body.message).toBe("Invalid two-factor authentication credentials.");
+      expect(verifyRes2.body.detail ?? verifyRes2.body.message).toBe(
+        "Invalid two-factor authentication credentials.",
+      );
     });
 
     it("drift boundaries: accepts valid codes at ±1 step (±30s) and rejects codes outside boundary (±60s)", async () => {
@@ -1741,7 +1755,9 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
         .send({ temporaryToken: tempToken, code: validCode })
         .expect(401);
 
-      expect(capExceededRes.body.message).toBe("Invalid two-factor authentication credentials.");
+      expect(capExceededRes.body.detail ?? capExceededRes.body.message).toBe(
+        "Invalid two-factor authentication credentials.",
+      );
 
       // Clean up attempt cap for subsequent tests
       await redisService.getClient()?.del(`auth:2fa:attempts:${userAId}`);
@@ -1764,7 +1780,9 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
         .get("/api/v1/auth/me")
         .set("Authorization", `Bearer ${tempToken}`)
         .expect(403);
-      expect(meRes.body.message).toContain("Two-factor authentication completion required");
+      expect(meRes.body.detail ?? meRes.body.message).toContain(
+        "Two-factor authentication completion required",
+      );
 
       await request(app.getHttpServer())
         .get("/api/v1/auth/sessions")
@@ -1828,7 +1846,9 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
         .send({ temporaryToken: login2.body.temporaryToken, recoveryCode: codeToUse })
         .expect(401);
 
-      expect(res2.body.message).toBe("Invalid two-factor authentication credentials.");
+      expect(res2.body.detail ?? res2.body.message).toBe(
+        "Invalid two-factor authentication credentials.",
+      );
     });
 
     it("cross-tenant recovery code: rejects redemption of Tenant A recovery code against Tenant B account", async () => {
@@ -1850,12 +1870,21 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
         .send({ temporaryToken: bobLogin.body.temporaryToken, recoveryCode: crossTenantCode })
         .expect(401);
 
-      expect(res.body.message).toBe("Invalid two-factor authentication credentials.");
+      expect(res.body.detail ?? res.body.message).toBe(
+        "Invalid two-factor authentication credentials.",
+      );
     });
 
     it("regeneration invalidating old codes: revokes older recovery codes and revokes other sessions", async () => {
       const redisService = app.get(RedisService);
-      await redisService.getClient()?.del(`auth:2fa:attempts:${userAId}`);
+      const redisClient = redisService.getClient();
+      if (redisClient) {
+        await redisClient.del(`auth:2fa:attempts:${userAId}`);
+        const replayKeys = await redisClient.keys(`auth:totp:replay:${userAId}:*`);
+        if (replayKeys.length > 0) {
+          await redisClient.del(...replayKeys);
+        }
+      }
 
       // 1. Establish session 1 for Alice
       const login1 = await request(app.getHttpServer())
@@ -1875,6 +1904,12 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
       const tokenSession1 = auth1.body.accessToken;
 
       // 2. Establish session 2 for Alice
+      if (redisClient) {
+        const replayKeys = await redisClient.keys(`auth:totp:replay:${userAId}:*`);
+        if (replayKeys.length > 0) {
+          await redisClient.del(...replayKeys);
+        }
+      }
       const login2 = await request(app.getHttpServer())
         .post("/api/v1/auth/login")
         .send({
@@ -1884,7 +1919,7 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
           clientType: "mobile",
         })
         .expect(200);
-      const code2 = totpService.generateCode(capturedTotpSecret, Date.now() + 30000);
+      const code2 = totpService.generateCode(capturedTotpSecret);
       const auth2 = await request(app.getHttpServer())
         .post("/api/v1/auth/2fa/verify")
         .send({ temporaryToken: login2.body.temporaryToken, code: code2 })
@@ -1960,6 +1995,7 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
         })
         .expect(200);
 
+      await new Promise((resolve) => setTimeout(resolve, 50));
       const combinedLogs = testLogBuffer.join("\n");
 
       // Verify captured real TOTP secret is never in logs

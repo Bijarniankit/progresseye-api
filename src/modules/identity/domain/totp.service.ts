@@ -191,7 +191,7 @@ export class TotpService {
     candidateCode: string,
     timestampMs = Date.now(),
   ): number | null {
-    if (!candidateCode || candidateCode.length !== 6 || !/^\d{6}$/.test(candidateCode)) {
+    if (candidateCode?.length !== 6 || !/^\d{6}$/.test(candidateCode)) {
       return null;
     }
 
@@ -237,7 +237,7 @@ export class TotpService {
 
     // Check replay via Redis SET NX
     const redisClient = this.redisService.getClient();
-    if (!redisClient || redisClient.status !== "ready") {
+    if (redisClient?.status !== "ready") {
       throw new ServiceUnavailableException(
         "Authentication service temporarily unavailable. Please try again.",
       );
@@ -300,7 +300,7 @@ export class TotpService {
    */
   async checkAndIncrementAttemptCap(userId: string): Promise<boolean> {
     const redisClient = this.redisService.getClient();
-    if (!redisClient || redisClient.status !== "ready") {
+    if (redisClient?.status !== "ready") {
       throw new ServiceUnavailableException(
         "Authentication service temporarily unavailable. Please try again.",
       );
