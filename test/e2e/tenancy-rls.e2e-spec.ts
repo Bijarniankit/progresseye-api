@@ -787,6 +787,234 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
     });
   });
 
+  describe("Test 20: Phase 12b-2 Two-Factor Secrets and Recovery Codes RLS Isolation", () => {
+    let appPrisma: PrismaService;
+    const testSecretId = uuidv7();
+    const testRecoveryCodeId = uuidv7();
+
+    beforeAll(async () => {
+      appPrisma = new PrismaService(tenantContext, {
+        datasources: { db: { url: appDbUrl } },
+      });
+      await appPrisma.$connect();
+    });
+
+    afterAll(async () => {
+      await appPrisma.$disconnect();
+    });
+
+    it("should allow Tenant A to insert and read its own 2FA secret and recovery codes", async () => {
+      await tenantContext.run({ schoolId: schoolA }, async () => {
+        const client = appPrisma.client;
+
+        await client.$executeRaw`
+          INSERT INTO user_two_factor_secrets (id, school_id, user_id, encrypted_secret, iv, auth_tag, is_verified)
+          VALUES (${testSecretId}::uuid, ${schoolA}::uuid, ${userAId}::uuid, 'enc-secret-a', 'iv-a', 'tag-a', false);
+        `;
+
+        await client.$executeRaw`
+          INSERT INTO user_recovery_codes (id, school_id, user_id, code_hash)
+          VALUES (${testRecoveryCodeId}::uuid, ${schoolA}::uuid, ${userAId}::uuid, 'recovery-hash-a');
+        `;
+
+        const secrets: any[] = await client.$queryRaw`
+          SELECT id, encrypted_secret FROM user_two_factor_secrets WHERE id = ${testSecretId}::uuid;
+        `;
+        expect(secrets.length).toBe(1);
+        expect(secrets[0].encrypted_secret).toBe("enc-secret-a");
+
+        const codes: any[] = await client.$queryRaw`
+          SELECT id, code_hash FROM user_recovery_codes WHERE id = ${testRecoveryCodeId}::uuid;
+        `;
+        expect(codes.length).toBe(1);
+        expect(codes[0].code_hash).toBe("recovery-hash-a");
+      });
+    });
+
+    it("should prevent Tenant B from reading Tenant A 2FA secrets or recovery codes (cross-tenant read isolation)", async () => {
+      await tenantContext.run({ schoolId: schoolB }, async () => {
+        const client = appPrisma.client;
+
+        const secrets: any[] = await client.$queryRaw`
+          SELECT id FROM user_two_factor_secrets WHERE id = ${testSecretId}::uuid;
+        `;
+        expect(secrets.length).toBe(0);
+
+        const codes: any[] = await client.$queryRaw`
+          SELECT id FROM user_recovery_codes WHERE id = ${testRecoveryCodeId}::uuid;
+        `;
+        expect(codes.length).toBe(0);
+      });
+    });
+
+    it("should reject cross-tenant inserts for 2FA secrets and recovery codes (RLS WITH CHECK)", async () => {
+      const maliciousId = uuidv7();
+      await tenantContext.run({ schoolId: schoolA }, async () => {
+        const client = appPrisma.client;
+
+        await expect(
+          client.$executeRaw`
+            INSERT INTO user_two_factor_secrets (id, school_id, user_id, encrypted_secret, iv, auth_tag, is_verified)
+            VALUES (${maliciousId}::uuid, ${schoolB}::uuid, ${userBId}::uuid, 'malicious-enc-secret', 'iv-b', 'tag-b', false);
+          `,
+        ).rejects.toThrow();
+
+        await expect(
+          client.$executeRaw`
+            INSERT INTO user_recovery_codes (id, school_id, user_id, code_hash)
+            VALUES (${maliciousId}::uuid, ${schoolB}::uuid, ${userBId}::uuid, 'malicious-recovery-hash');
+          `,
+        ).rejects.toThrow();
+      });
+    });
+
+    it("should prevent Tenant B from updating Tenant A 2FA secrets or recovery codes (0 rows affected)", async () => {
+      await tenantContext.run({ schoolId: schoolB }, async () => {
+        const client = appPrisma.client;
+
+        const updateSecretCount = await client.$executeRaw`
+          UPDATE user_two_factor_secrets
+          SET is_verified = true
+          WHERE id = ${testSecretId}::uuid;
+        `;
+        expect(updateSecretCount).toBe(0);
+
+        const updateCodeCount = await client.$executeRaw`
+          UPDATE user_recovery_codes
+          SET used_at = CURRENT_TIMESTAMP
+          WHERE id = ${testRecoveryCodeId}::uuid;
+        `;
+        expect(updateCodeCount).toBe(0);
+      });
+    });
+
+    it("should reject DELETE on 2FA tables under progresseye_app (permission denied)", async () => {
+      await tenantContext.run({ schoolId: schoolA }, async () => {
+        const client = appPrisma.client;
+
+        await expect(
+          client.$executeRaw`
+            DELETE FROM user_two_factor_secrets WHERE id = ${testSecretId}::uuid;
+          `,
+        ).rejects.toThrow(/permission denied for table user_two_factor_secrets/);
+
+        await expect(
+          client.$executeRaw`
+            DELETE FROM user_recovery_codes WHERE id = ${testRecoveryCodeId}::uuid;
+          `,
+        ).rejects.toThrow(/permission denied for table user_recovery_codes/);
+      });
+    });
+
+    it("should prevent cross-tenant 2FA table deletion under progresseye_owner (0 rows affected via RLS)", async () => {
+      const ownerPrisma = new PrismaClient({
+        datasources: { db: { url: ownerDbUrl } },
+      });
+      await ownerPrisma.$connect();
+
+      await ownerPrisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT set_config('app.current_school_id', ${schoolB}, true);`;
+        const deletedSecretCount = await tx.$executeRaw`
+          DELETE FROM user_two_factor_secrets WHERE id = ${testSecretId}::uuid;
+        `;
+        expect(deletedSecretCount).toBe(0);
+
+        const deletedCodeCount = await tx.$executeRaw`
+          DELETE FROM user_recovery_codes WHERE id = ${testRecoveryCodeId}::uuid;
+        `;
+        expect(deletedCodeCount).toBe(0);
+      });
+
+      await ownerPrisma.$disconnect();
+    });
+
+    it("should reject Nil-UUID as school_id for 2FA tables via check constraints", async () => {
+      const nilUuid = "00000000-0000-0000-0000-000000000000";
+      const recordUuid = uuidv7();
+
+      await expect(
+        prisma.$executeRaw`
+          INSERT INTO user_two_factor_secrets (id, school_id, user_id, encrypted_secret, iv, auth_tag, is_verified)
+          VALUES (${recordUuid}::uuid, ${nilUuid}::uuid, ${userAId}::uuid, 'nil-secret', 'iv', 'tag', false);
+        `,
+      ).rejects.toThrow();
+
+      await expect(
+        prisma.$executeRaw`
+          INSERT INTO user_recovery_codes (id, school_id, user_id, code_hash)
+          VALUES (${recordUuid}::uuid, ${nilUuid}::uuid, ${userAId}::uuid, 'nil-code-hash');
+        `,
+      ).rejects.toThrow();
+    });
+
+    it("should enforce FORCE RLS even on progresseye_owner for 2FA tables (fail-closed without tenant context, scoped with tenant context)", async () => {
+      const ownerPrisma = new PrismaClient({
+        datasources: { db: { url: ownerDbUrl } },
+      });
+      await ownerPrisma.$connect();
+
+      // Query with empty context: returns 0 rows (FORCE RLS enforces fail-closed against owner)
+      const emptySecrets: any[] = await ownerPrisma.$queryRaw`
+        SELECT id FROM user_two_factor_secrets WHERE id = ${testSecretId}::uuid;
+      `;
+      expect(emptySecrets.length).toBe(0);
+
+      const emptyCodes: any[] = await ownerPrisma.$queryRaw`
+        SELECT id FROM user_recovery_codes WHERE id = ${testRecoveryCodeId}::uuid;
+      `;
+      expect(emptyCodes.length).toBe(0);
+
+      // Query with Tenant A context: sees Tenant A records
+      await ownerPrisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT set_config('app.current_school_id', ${schoolA}, true);`;
+        const secrets: any[] = await tx.$queryRaw`
+          SELECT id FROM user_two_factor_secrets WHERE id = ${testSecretId}::uuid;
+        `;
+        expect(secrets.length).toBe(1);
+
+        const codes: any[] = await tx.$queryRaw`
+          SELECT id FROM user_recovery_codes WHERE id = ${testRecoveryCodeId}::uuid;
+        `;
+        expect(codes.length).toBe(1);
+      });
+
+      // Query with Tenant B context: sees 0 rows for Tenant A records
+      await ownerPrisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT set_config('app.current_school_id', ${schoolB}, true);`;
+        const secrets: any[] = await tx.$queryRaw`
+          SELECT id FROM user_two_factor_secrets WHERE id = ${testSecretId}::uuid;
+        `;
+        expect(secrets.length).toBe(0);
+      });
+
+      await ownerPrisma.$disconnect();
+    });
+
+    it("should enforce minimal role grants: progresseye_ro cannot insert into 2FA tables", async () => {
+      await tenantContext.run({ schoolId: schoolA }, async () => {
+        const client = prisma.client;
+        await client.$executeRawUnsafe(`SET ROLE progresseye_ro;`);
+
+        const recordUuid = uuidv7();
+        await expect(
+          client.$executeRaw`
+            INSERT INTO user_two_factor_secrets (id, school_id, user_id, encrypted_secret, iv, auth_tag, is_verified)
+            VALUES (${recordUuid}::uuid, ${schoolA}::uuid, ${userAId}::uuid, 'ro-forbidden', 'iv', 'tag', false);
+          `,
+        ).rejects.toThrow(/permission denied/i);
+
+        await expect(
+          client.$executeRaw`
+            INSERT INTO user_recovery_codes (id, school_id, user_id, code_hash)
+            VALUES (${recordUuid}::uuid, ${schoolA}::uuid, ${userAId}::uuid, 'ro-forbidden-hash');
+          `,
+        ).rejects.toThrow(/permission denied/i);
+
+        await client.$executeRawUnsafe(`RESET ROLE;`);
+      });
+    });
+  });
+
   describe("Test 14: Migration Deploy from Empty Database", () => {
     const dbUrlBase =
       process.env.DATABASE_URL?.substring(0, process.env.DATABASE_URL.lastIndexOf("/")) ??

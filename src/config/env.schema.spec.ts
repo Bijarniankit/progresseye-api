@@ -39,6 +39,7 @@ describe("Environment Configuration Validation", () => {
         DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/staging_db",
         DIAGNOSTICS_ENABLED: "true",
         APP_PUBLIC_URL: "https://staging.progresseye.com",
+        AUTH_TOTP_ENC_KEY: "staging-totp-encryption-key-sample-32chars",
       });
       expect(env.DIAGNOSTICS_ENABLED).toBe(true);
     });
@@ -65,6 +66,7 @@ describe("Environment Configuration Validation", () => {
       AUTH_JWT_SECRET: "prod-secure-random-32char-token-signing-key-sample",
       AUTH_LOG_HMAC_SECRET: "prod-secure-hmac-salt-key-sample",
       AUTH_GRACE_ENC_KEY: "prod-secure-random-32char-grace-encryption-key-sample",
+      AUTH_TOTP_ENC_KEY: "prod-secure-random-32char-totp-encryption-key-sample",
       APP_PUBLIC_URL: "https://app.progresseye.com",
     };
 
@@ -175,6 +177,43 @@ describe("Environment Configuration Validation", () => {
       );
     });
 
+    it("should reject startup in production if AUTH_TOTP_ENC_KEY is weak or default", () => {
+      expect(() =>
+        validateEnv({
+          ...baseProdConfig,
+          TURNSTILE_ENABLED: "true",
+          TURNSTILE_SECRET_KEY: "0x4AAAAAAAxRealCloudflareSecretKeyExample",
+          AUTH_TOTP_ENC_KEY: "dev-insecure-totp-key-min32charslong!",
+        }),
+      ).toThrow(
+        /AUTH_TOTP_ENC_KEY must be at least 32 characters and cannot use default\/weak patterns in production or staging/,
+      );
+
+      expect(() =>
+        validateEnv({
+          ...baseProdConfig,
+          TURNSTILE_ENABLED: "true",
+          TURNSTILE_SECRET_KEY: "0x4AAAAAAAxRealCloudflareSecretKeyExample",
+          AUTH_TOTP_ENC_KEY: "too-short",
+        }),
+      ).toThrow(
+        /AUTH_TOTP_ENC_KEY must be at least 32 characters and cannot use default\/weak patterns in production or staging/,
+      );
+    });
+
+    it("should reject startup in staging if AUTH_TOTP_ENC_KEY is weak or default", () => {
+      expect(() =>
+        validateEnv({
+          ...baseProdConfig,
+          APP_ENV: "staging",
+          NODE_ENV: "development",
+          AUTH_TOTP_ENC_KEY: "dev-insecure-totp-key-min32charslong!",
+        }),
+      ).toThrow(
+        /AUTH_TOTP_ENC_KEY must be at least 32 characters and cannot use default\/weak patterns in production or staging/,
+      );
+    });
+
     it("should hit production guards when APP_ENV is staging but NODE_ENV is production", () => {
       expect(() =>
         validateEnv({
@@ -276,6 +315,7 @@ describe("Environment Configuration Validation", () => {
         AUTH_JWT_SECRET: "staging-secure-random-32char-token-signing-key",
         AUTH_LOG_HMAC_SECRET: "staging-secure-hmac-salt-key-sample",
         AUTH_GRACE_ENC_KEY: "staging-secure-random-32char-grace-enc-key",
+        AUTH_TOTP_ENC_KEY: "staging-totp-encryption-key-sample-32chars",
         APP_PUBLIC_URL: "https://staging.progresseye.com",
       });
       expect(env.APP_PUBLIC_URL).toBe("https://staging.progresseye.com");

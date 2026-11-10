@@ -38,6 +38,25 @@ export class SessionRepository {
   }
 
   /**
+   * Resolves school metadata by ID.
+   */
+  async findSchoolById(schoolId: string) {
+    return this.prisma.school.findFirst({
+      where: {
+        id: schoolId,
+        isActive: true,
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        slug: true,
+        name: true,
+        isActive: true,
+      },
+    });
+  }
+
+  /**
    * Finds a user by email within a bound school tenant context under RLS.
    */
   async findUserByEmail(schoolId: string, email: string) {
@@ -472,5 +491,225 @@ export class SessionRepository {
     } catch {
       // Audit log failures must not crash caller, but logged
     }
+  }
+
+  /**
+   * Upserts an unverified two-factor secret configuration for a user.
+   */
+  async upsertTwoFactorSecret(params: {
+    schoolId: string;
+    userId: string;
+    encryptedSecret: string;
+    iv: string;
+    authTag: string;
+  }) {
+    return this.prisma.withTenant(params.schoolId, async (tx) => {
+      return tx.userTwoFactorSecret.upsert({
+        where: { userId: params.userId },
+        create: {
+          schoolId: params.schoolId,
+          userId: params.userId,
+          encryptedSecret: params.encryptedSecret,
+          iv: params.iv,
+          authTag: params.authTag,
+          isVerified: false,
+          verifiedAt: null,
+        },
+        update: {
+          encryptedSecret: params.encryptedSecret,
+          iv: params.iv,
+          authTag: params.authTag,
+          isVerified: false,
+          verifiedAt: null,
+        },
+      });
+    });
+  }
+
+  /**
+   * Finds the user's two-factor secret record under tenant context.
+   */
+  async findTwoFactorSecret(schoolId: string, userId: string) {
+    return this.prisma.withTenant(schoolId, async (tx) => {
+      return tx.userTwoFactorSecret.findFirst({
+        where: {
+          schoolId,
+          userId,
+        },
+      });
+    });
+  }
+
+  /**
+   * Enables 2FA: marks secret verified, sets user.is_two_factor_enabled = true,
+   * revokes existing recovery codes, and inserts fresh recovery codes.
+   */
+  async enableTwoFactor(params: {
+    schoolId: string;
+    userId: string;
+    recoveryCodeHashes: string[];
+  }) {
+    return this.prisma.withTenant(params.schoolId, async (tx) => {
+      await tx.userTwoFactorSecret.update({
+        where: { userId: params.userId },
+        data: {
+          isVerified: true,
+          verifiedAt: new Date(),
+        },
+      });
+
+      await tx.user.update({
+        where: { id: params.userId, schoolId: params.schoolId },
+        data: {
+          isTwoFactorEnabled: true,
+        },
+      });
+
+      // Revoke any previous recovery codes
+      await tx.userRecoveryCode.updateMany({
+        where: {
+          schoolId: params.schoolId,
+          userId: params.userId,
+          revokedAt: null,
+        },
+        data: {
+          revokedAt: new Date(),
+        },
+      });
+
+      // Insert new recovery codes
+      await tx.userRecoveryCode.createMany({
+        data: params.recoveryCodeHashes.map((codeHash) => ({
+          schoolId: params.schoolId,
+          userId: params.userId,
+          codeHash,
+        })),
+      });
+    });
+  }
+
+  /**
+   * Disables 2FA: sets user.is_two_factor_enabled = false, resets secret verification,
+   * revokes all active recovery codes, and revokes all other sessions.
+   */
+  async disableTwoFactor(schoolId: string, userId: string, currentSessionId?: string) {
+    return this.prisma.withTenant(schoolId, async (tx) => {
+      await tx.user.update({
+        where: { id: userId, schoolId },
+        data: {
+          isTwoFactorEnabled: false,
+        },
+      });
+
+      await tx.userTwoFactorSecret.updateMany({
+        where: { userId, schoolId },
+        data: {
+          isVerified: false,
+          verifiedAt: null,
+        },
+      });
+
+      await tx.userRecoveryCode.updateMany({
+        where: {
+          schoolId,
+          userId,
+          revokedAt: null,
+        },
+        data: {
+          revokedAt: new Date(),
+        },
+      });
+
+      // Revoke all other sessions for user
+      await tx.session.updateMany({
+        where: {
+          schoolId,
+          userId,
+          id: currentSessionId ? { not: currentSessionId } : undefined,
+          revokedAt: null,
+        },
+        data: {
+          revokedAt: new Date(),
+        },
+      });
+    });
+  }
+
+  /**
+   * Regenerates recovery codes: revokes old ones, inserts new ones, and revokes other sessions.
+   */
+  async regenerateRecoveryCodes(params: {
+    schoolId: string;
+    userId: string;
+    recoveryCodeHashes: string[];
+    currentSessionId?: string;
+  }) {
+    return this.prisma.withTenant(params.schoolId, async (tx) => {
+      await tx.userRecoveryCode.updateMany({
+        where: {
+          schoolId: params.schoolId,
+          userId: params.userId,
+          revokedAt: null,
+        },
+        data: {
+          revokedAt: new Date(),
+        },
+      });
+
+      await tx.userRecoveryCode.createMany({
+        data: params.recoveryCodeHashes.map((codeHash) => ({
+          schoolId: params.schoolId,
+          userId: params.userId,
+          codeHash,
+        })),
+      });
+
+      // Revoke other sessions
+      await tx.session.updateMany({
+        where: {
+          schoolId: params.schoolId,
+          userId: params.userId,
+          id: params.currentSessionId ? { not: params.currentSessionId } : undefined,
+          revokedAt: null,
+        },
+        data: {
+          revokedAt: new Date(),
+        },
+      });
+    });
+  }
+
+  /**
+   * Verifies and marks a single-use recovery code as consumed.
+   */
+  async verifyAndConsumeRecoveryCode(params: {
+    schoolId: string;
+    userId: string;
+    codeHash: string;
+  }): Promise<boolean> {
+    return this.prisma.withTenant(params.schoolId, async (tx) => {
+      const codeRecord = await tx.userRecoveryCode.findFirst({
+        where: {
+          schoolId: params.schoolId,
+          userId: params.userId,
+          codeHash: params.codeHash,
+          usedAt: null,
+          revokedAt: null,
+        },
+      });
+
+      if (!codeRecord) {
+        return false;
+      }
+
+      await tx.userRecoveryCode.update({
+        where: { id: codeRecord.id },
+        data: {
+          usedAt: new Date(),
+        },
+      });
+
+      return true;
+    });
   }
 }

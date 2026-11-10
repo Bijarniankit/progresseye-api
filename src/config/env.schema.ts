@@ -46,6 +46,7 @@ export const baseEnvSchema = z.object({
   AUTH_JWT_KID: z.string().default("pe-key-2026-v1"),
   AUTH_LOG_HMAC_SECRET: z.string().min(16).default("dev-auth-log-hmac-secret-min16ch"),
   AUTH_GRACE_ENC_KEY: z.string().min(32).default("dev-insecure-grace-key-min32charslong!"),
+  AUTH_TOTP_ENC_KEY: z.string().min(32).default("dev-insecure-totp-key-min32charslong!"),
   AUTH_BREACHED_PASSWORD_CHECK_ENABLED: z.enum(["true", "false"]).default("false"),
 
   // Legacy auth secrets (deprecated in favor of AUTH_JWT_SECRET)
@@ -158,6 +159,27 @@ export const envSchema = baseEnvSchema.superRefine((data, ctx) => {
   const isProdOrStaging =
     data.APP_ENV === "production" || data.APP_ENV === "staging" || data.NODE_ENV === "production";
   if (isProdOrStaging) {
+    const weakTotpPatterns = [
+      "insecure",
+      "default",
+      "changeme",
+      "secret",
+      "progress-eye-dev",
+      "123456",
+    ];
+    if (
+      !data.AUTH_TOTP_ENC_KEY ||
+      data.AUTH_TOTP_ENC_KEY.length < 32 ||
+      weakTotpPatterns.some((pattern) => data.AUTH_TOTP_ENC_KEY.toLowerCase().includes(pattern))
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["AUTH_TOTP_ENC_KEY"],
+        message:
+          "AUTH_TOTP_ENC_KEY must be at least 32 characters and cannot use default/weak patterns in production or staging.",
+      });
+    }
+
     if (
       !data.APP_PUBLIC_URL ||
       data.APP_PUBLIC_URL.includes("localhost") ||

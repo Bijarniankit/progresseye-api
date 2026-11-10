@@ -182,6 +182,29 @@ async function main() {
   }
   console.log("Verified Phase 12b-1 account lifecycle tables and columns deployed successfully.");
 
+  const totpSecretTable: any[] = await upgradePrisma.$queryRaw`
+    SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename = 'user_two_factor_secrets';
+  `;
+  if (totpSecretTable.length !== 1) {
+    throw new Error("Phase 12b-2 user_two_factor_secrets table not found!");
+  }
+
+  const recoveryCodeTable: any[] = await upgradePrisma.$queryRaw`
+    SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename = 'user_recovery_codes';
+  `;
+  if (recoveryCodeTable.length !== 1) {
+    throw new Error("Phase 12b-2 user_recovery_codes table not found!");
+  }
+
+  const userTwoFactorCol: any[] = await upgradePrisma.$queryRaw`
+    SELECT column_name FROM information_schema.columns 
+    WHERE table_name = 'users' AND column_name = 'is_two_factor_enabled';
+  `;
+  if (userTwoFactorCol.length !== 1) {
+    throw new Error("Phase 12b-2 is_two_factor_enabled column on users table not found!");
+  }
+  console.log("Verified Phase 12b-2 TOTP and recovery codes tables deployed successfully.");
+
   await upgradePrisma.$disconnect();
   await adminPrisma.$disconnect();
 

@@ -8,6 +8,7 @@ export const UserSummarySchema = z.object({
   lastName: z.string(),
   mustChangePassword: z.boolean(),
   roles: z.array(z.string()),
+  isTwoFactorEnabled: z.boolean().optional(),
 });
 
 export const LoginResponseSchema = z.object({
@@ -16,6 +17,7 @@ export const LoginResponseSchema = z.object({
   user: UserSummarySchema,
   refreshToken: z.string().optional(),
   mustChangePassword: z.boolean().optional(),
+  requires2Fa: z.boolean().optional(),
   temporaryToken: z.string().optional(),
 });
 
@@ -50,3 +52,16 @@ export const SessionListSchema = z.object({
 });
 
 export class SessionListDto extends createZodDto(SessionListSchema) {}
+
+export const TwoFactorSetupResponseSchema = z.object({
+  secret: z.string(),
+  uri: z.string(),
+});
+
+export class TwoFactorSetupResponseDto extends createZodDto(TwoFactorSetupResponseSchema) {}
+
+export const TwoFactorEnableResponseSchema = z.object({
+  recoveryCodes: z.array(z.string()),
+});
+
+export class TwoFactorEnableResponseDto extends createZodDto(TwoFactorEnableResponseSchema) {}
