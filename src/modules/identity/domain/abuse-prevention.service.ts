@@ -225,6 +225,86 @@ export class AbusePreventionService {
     return this.decryptGracePayload(rawEncrypted);
   }
 
+  // --- Pre-Auth & Account Lifecycle Rate Limits (Phase 12b) ---
+
+  async checkForgotPasswordRateLimit(ip: string, email: string): Promise<void> {
+    const ipHmac = this.getHmac(ip);
+    const emailHmac = this.getHmac(email);
+
+    const ipAttempts = await this.getCounter(`ratelimit:auth:forgot:ip:${ipHmac}`);
+    if (ipAttempts >= 10) {
+      throw new HttpException(
+        {
+          statusCode: HttpStatus.TOO_MANY_REQUESTS,
+          error: "Too Many Requests",
+          message: "Too many password reset requests from this network. Please try again later.",
+        },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    const pairAttempts = await this.getCounter(`ratelimit:auth:forgot:pair:${emailHmac}:${ipHmac}`);
+    if (pairAttempts >= 3) {
+      throw new HttpException(
+        {
+          statusCode: HttpStatus.TOO_MANY_REQUESTS,
+          error: "Too Many Requests",
+          message: "Too many password reset requests for this email. Please try again later.",
+        },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+  }
+
+  async recordForgotPasswordAttempt(ip: string, email: string): Promise<void> {
+    const ipHmac = this.getHmac(ip);
+    const emailHmac = this.getHmac(email);
+    await this.incrementCounter(`ratelimit:auth:forgot:ip:${ipHmac}`, 15 * 60);
+    await this.incrementCounter(`ratelimit:auth:forgot:pair:${emailHmac}:${ipHmac}`, 15 * 60);
+  }
+
+  async checkResetPasswordRateLimit(ip: string): Promise<void> {
+    const ipHmac = this.getHmac(ip);
+    const attempts = await this.getCounter(`ratelimit:auth:reset:ip:${ipHmac}`);
+    if (attempts >= 10) {
+      throw new HttpException(
+        {
+          statusCode: HttpStatus.TOO_MANY_REQUESTS,
+          error: "Too Many Requests",
+          message: "Too many password reset attempts. Please try again later.",
+        },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+  }
+
+  async recordResetPasswordAttempt(ip: string): Promise<void> {
+    const ipHmac = this.getHmac(ip);
+    await this.incrementCounter(`ratelimit:auth:reset:ip:${ipHmac}`, 15 * 60);
+  }
+
+  async checkResendVerificationRateLimit(ip: string, email: string): Promise<void> {
+    const ipHmac = this.getHmac(ip);
+    const emailHmac = this.getHmac(email);
+    const pairAttempts = await this.getCounter(`ratelimit:auth:resend:pair:${emailHmac}:${ipHmac}`);
+    if (pairAttempts >= 3) {
+      throw new HttpException(
+        {
+          statusCode: HttpStatus.TOO_MANY_REQUESTS,
+          error: "Too Many Requests",
+          message: "Too many verification requests for this email. Please try again later.",
+        },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+  }
+
+  async recordResendVerificationAttempt(ip: string, email: string): Promise<void> {
+    const ipHmac = this.getHmac(ip);
+    const emailHmac = this.getHmac(email);
+    await this.incrementCounter(`ratelimit:auth:resend:pair:${emailHmac}:${ipHmac}`, 15 * 60);
+  }
+
   // --- Redis & Memory Helper Methods ---
 
   private async getCounter(key: string): Promise<number> {

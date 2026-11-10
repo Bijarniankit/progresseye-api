@@ -13,7 +13,13 @@ import { AbusePreventionService } from "../domain/abuse-prevention.service";
 import { PasswordService } from "../domain/password.service";
 import { TokenService } from "../domain/token.service";
 import type { ChangePasswordDto } from "../dto/change-password.dto";
+import type { FirstLoginPasswordDto } from "../dto/first-login-password.dto";
+import type { ForgotPasswordDto } from "../dto/forgot-password.dto";
 import type { LoginDto } from "../dto/login.dto";
+import type { ResendVerificationDto } from "../dto/resend-verification.dto";
+import type { ResetPasswordDto } from "../dto/reset-password.dto";
+import type { VerifyEmailDto } from "../dto/verify-email.dto";
+import { AuthEmailNotificationService } from "../infra/auth-email-notification.service";
 import { SessionRepository } from "../infra/session.repository";
 
 @Injectable()
@@ -29,6 +35,7 @@ export class AuthService {
     private readonly abusePreventionService: AbusePreventionService,
     private readonly tenantContext: TenantContextService,
     private readonly config: AppConfigService,
+    private readonly authEmailNotificationService: AuthEmailNotificationService,
   ) {
     this.corsOrigin = this.config.get("CORS_ORIGIN");
     this.hmacSecret = this.config.get("AUTH_LOG_HMAC_SECRET");
@@ -98,6 +105,31 @@ export class AuthService {
     await this.abusePreventionService.recordSuccessfulLogin(meta.ip, email, school.id);
     await this.sessionRepository.recordUserLogin(school.id, user.id);
 
+    const roles = user.userRoles.map((ur) => ur.role.name);
+
+    // If first-login forced password change is required, issue a restricted temporary token
+    if (user.mustChangePassword) {
+      const { token: temporaryToken, expiresIn: tempExpiresIn } =
+        await this.tokenService.createTemporaryPasswordChangeToken({
+          userId: user.id,
+          schoolId: school.id,
+        });
+
+      return {
+        mustChangePassword: true,
+        temporaryToken,
+        expiresIn: tempExpiresIn,
+        user: {
+          id: user.id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          mustChangePassword: true,
+          roles,
+        },
+      };
+    }
+
     // 6. Create session
     const rawRefreshToken = this.tokenService.generateRefreshToken();
     const tokenHash = this.tokenService.hashToken(rawRefreshToken);
@@ -137,8 +169,6 @@ export class AuthService {
         ipHmac: hmacHash(meta.ip, this.hmacSecret),
       },
     });
-
-    const roles = user.userRoles.map((ur) => ur.role.name);
 
     return {
       accessToken,
@@ -430,6 +460,279 @@ export class AuthService {
     return {
       message: "Password changed successfully. Other sessions have been revoked.",
       revokedOtherSessionsCount: revokedCount,
+    };
+  }
+
+  /**
+   * First login forced password change: takes temporary token with scope 'pwd_change_pending',
+   * updates password, clears must_change_password flag, revokes any prior sessions,
+   * and issues full authenticated session.
+   */
+  async firstLoginPassword(
+    claims: { userId: string; schoolId: string; scope?: string },
+    dto: FirstLoginPasswordDto,
+    meta: { userAgent?: string; ip: string; clientType?: "web" | "mobile" },
+  ) {
+    if (claims.scope !== "pwd_change_pending" && claims.scope !== "access") {
+      throw new ForbiddenException("Invalid token scope for password change");
+    }
+
+    const policy = this.passwordService.validatePolicy(dto.newPassword);
+    if (!policy.valid) {
+      throw new BadRequestException(
+        policy.message || "Password does not meet security requirements.",
+      );
+    }
+
+    const strength = this.passwordService.evaluateStrength(dto.newPassword);
+    if (strength.score < 3) {
+      throw new BadRequestException("Password is too weak. Please choose a stronger password.");
+    }
+
+    const schoolId = claims.schoolId;
+    const userId = claims.userId;
+
+    const user = await this.sessionRepository.findUserById(schoolId, userId);
+    if (!user) {
+      throw new UnauthorizedException("User not found.");
+    }
+
+    const newHash = await this.passwordService.hash(dto.newPassword);
+    await this.sessionRepository.updateUserPassword(schoolId, userId, newHash);
+    await this.sessionRepository.revokeAllUserSessions(schoolId, userId);
+
+    const clientType = meta.clientType || "web";
+    const rawRefreshToken = this.tokenService.generateRefreshToken();
+    const tokenHash = this.tokenService.hashToken(rawRefreshToken);
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+    const session = await this.sessionRepository.createSession({
+      schoolId,
+      userId,
+      tokenHash,
+      clientType,
+      userAgent: meta.userAgent,
+      ipAddress: meta.ip,
+      expiresAt,
+    });
+
+    const { token: accessToken, expiresIn } = await this.tokenService.createAccessToken({
+      userId,
+      schoolId,
+      sessionId: session.id,
+    });
+
+    const compoundRefreshToken = this.tokenService.buildCompoundRefreshToken(
+      schoolId,
+      rawRefreshToken,
+    );
+
+    await this.sessionRepository.recordAuditLog({
+      schoolId,
+      actorId: userId,
+      action: "AUTH.FIRST_LOGIN_PASSWORD_CHANGE",
+      entityId: userId,
+      metadata: {
+        sessionId: session.id,
+        ipHmac: hmacHash(meta.ip, this.hmacSecret),
+      },
+    });
+
+    const roles = user.userRoles.map((ur) => ur.role.name);
+
+    return {
+      accessToken,
+      expiresIn,
+      compoundRefreshToken,
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        mustChangePassword: false,
+        roles,
+      },
+    };
+  }
+
+  /**
+   * Request password reset email: timing-safe, generic response preventing user enumeration.
+   */
+  async forgotPassword(dto: ForgotPasswordDto, meta: { ip: string; userAgent?: string }) {
+    const slug = dto.schoolSlug.trim().toLowerCase();
+    const email = dto.email.trim().toLowerCase();
+
+    await this.abusePreventionService.checkForgotPasswordRateLimit(meta.ip, email);
+    await this.abusePreventionService.recordForgotPasswordAttempt(meta.ip, email);
+
+    const school = await this.sessionRepository.findSchoolBySlug(slug);
+    if (!school) {
+      await this.passwordService.verifyDummy("dummy-pwd");
+      return {
+        message: "If an account matches that email, a password reset link has been sent.",
+      };
+    }
+
+    const user = await this.sessionRepository.findUserByEmail(school.id, email);
+    if (!user || !user.isActive) {
+      await this.passwordService.verifyDummy("dummy-pwd");
+      return {
+        message: "If an account matches that email, a password reset link has been sent.",
+      };
+    }
+
+    const rawToken = this.tokenService.generateLifecycleToken();
+    const tokenHash = this.tokenService.hashToken(rawToken);
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+    await this.sessionRepository.createPasswordResetToken({
+      schoolId: school.id,
+      userId: user.id,
+      tokenHash,
+      expiresAt,
+      ipAddress: meta.ip,
+      userAgent: meta.userAgent,
+    });
+
+    const compoundToken = this.tokenService.buildCompoundLifecycleToken(school.id, rawToken);
+
+    await this.authEmailNotificationService.sendPasswordResetEmail(user.email, compoundToken);
+
+    await this.sessionRepository.recordAuditLog({
+      schoolId: school.id,
+      actorId: user.id,
+      action: "AUTH.PASSWORD_RESET_REQUESTED",
+      entityId: user.id,
+      metadata: {
+        ipHmac: hmacHash(meta.ip, this.hmacSecret),
+      },
+    });
+
+    return {
+      message: "If an account matches that email, a password reset link has been sent.",
+    };
+  }
+
+  /**
+   * Reset password using compound token: validates token, enforces password strength,
+   * updates password, revokes all user sessions, and NEVER logs the user in.
+   */
+  async resetPassword(dto: ResetPasswordDto, meta: { ip: string }) {
+    await this.abusePreventionService.checkResetPasswordRateLimit(meta.ip);
+    await this.abusePreventionService.recordResetPasswordAttempt(meta.ip);
+
+    const { schoolId, rawToken } = this.tokenService.parseCompoundLifecycleToken(dto.token);
+    const tokenHash = this.tokenService.hashToken(rawToken);
+
+    const tokenRow = await this.sessionRepository.findPasswordResetToken(schoolId, tokenHash);
+    if (!tokenRow) {
+      throw new BadRequestException("Invalid or expired reset token.");
+    }
+
+    const policy = this.passwordService.validatePolicy(dto.newPassword);
+    if (!policy.valid) {
+      throw new BadRequestException(
+        policy.message || "Password does not meet security requirements.",
+      );
+    }
+
+    const strength = this.passwordService.evaluateStrength(dto.newPassword);
+    if (strength.score < 3) {
+      throw new BadRequestException("Password is too weak. Please choose a stronger password.");
+    }
+
+    // Mark token used immediately
+    await this.sessionRepository.markPasswordResetTokenUsed(schoolId, tokenRow.id);
+
+    // Hash new password and update user
+    const newHash = await this.passwordService.hash(dto.newPassword);
+    await this.sessionRepository.updateUserPassword(schoolId, tokenRow.userId, newHash);
+
+    // Revoke all existing sessions for this user (Amendment 5)
+    await this.sessionRepository.revokeAllUserSessions(schoolId, tokenRow.userId);
+
+    await this.sessionRepository.recordAuditLog({
+      schoolId,
+      actorId: tokenRow.userId,
+      action: "AUTH.PASSWORD_RESET_SUCCESS",
+      entityId: tokenRow.userId,
+      metadata: {
+        ipHmac: hmacHash(meta.ip, this.hmacSecret),
+      },
+    });
+
+    return {
+      message: "Password has been successfully reset. Please log in with your new password.",
+    };
+  }
+
+  /**
+   * Verify email using compound token.
+   */
+  async verifyEmail(dto: VerifyEmailDto) {
+    const { schoolId, rawToken } = this.tokenService.parseCompoundLifecycleToken(dto.token);
+    const tokenHash = this.tokenService.hashToken(rawToken);
+
+    const tokenRow = await this.sessionRepository.findEmailVerificationToken(schoolId, tokenHash);
+    if (!tokenRow) {
+      throw new BadRequestException("Invalid or expired verification token.");
+    }
+
+    await this.sessionRepository.markEmailVerified(schoolId, tokenRow.id, tokenRow.userId);
+
+    await this.sessionRepository.recordAuditLog({
+      schoolId,
+      actorId: tokenRow.userId,
+      action: "AUTH.EMAIL_VERIFIED",
+      entityId: tokenRow.userId,
+    });
+
+    return {
+      message: "Email has been successfully verified.",
+    };
+  }
+
+  /**
+   * Resend email verification link: generic response preventing user enumeration.
+   */
+  async resendVerification(dto: ResendVerificationDto, meta: { ip: string }) {
+    const slug = dto.schoolSlug.trim().toLowerCase();
+    const email = dto.email.trim().toLowerCase();
+
+    await this.abusePreventionService.checkResendVerificationRateLimit(meta.ip, email);
+    await this.abusePreventionService.recordResendVerificationAttempt(meta.ip, email);
+
+    const school = await this.sessionRepository.findSchoolBySlug(slug);
+    if (!school) {
+      return {
+        message: "If an account matches that email, a verification link has been sent.",
+      };
+    }
+
+    const user = await this.sessionRepository.findUserByEmail(school.id, email);
+    if (!user || !user.isActive || user.emailVerifiedAt) {
+      return {
+        message: "If an account matches that email, a verification link has been sent.",
+      };
+    }
+
+    const rawToken = this.tokenService.generateLifecycleToken();
+    const tokenHash = this.tokenService.hashToken(rawToken);
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+
+    await this.sessionRepository.createEmailVerificationToken({
+      schoolId: school.id,
+      userId: user.id,
+      tokenHash,
+      expiresAt,
+    });
+
+    const compoundToken = this.tokenService.buildCompoundLifecycleToken(school.id, rawToken);
+
+    await this.authEmailNotificationService.sendEmailVerificationEmail(user.email, compoundToken);
+
+    return {
+      message: "If an account matches that email, a verification link has been sent.",
     };
   }
 

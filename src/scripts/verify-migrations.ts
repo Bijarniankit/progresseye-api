@@ -159,6 +159,29 @@ async function main() {
   }
   console.log("Verified Phase 12a session family column deployed successfully.");
 
+  const resetTokenTable: any[] = await upgradePrisma.$queryRaw`
+    SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename = 'password_reset_tokens';
+  `;
+  if (resetTokenTable.length !== 1) {
+    throw new Error("Phase 12b-1 password_reset_tokens table not found!");
+  }
+
+  const verifyTokenTable: any[] = await upgradePrisma.$queryRaw`
+    SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename = 'email_verification_tokens';
+  `;
+  if (verifyTokenTable.length !== 1) {
+    throw new Error("Phase 12b-1 email_verification_tokens table not found!");
+  }
+
+  const userEmailVerifiedCol: any[] = await upgradePrisma.$queryRaw`
+    SELECT column_name FROM information_schema.columns 
+    WHERE table_name = 'users' AND column_name = 'email_verified_at';
+  `;
+  if (userEmailVerifiedCol.length !== 1) {
+    throw new Error("Phase 12b-1 email_verified_at column on users table not found!");
+  }
+  console.log("Verified Phase 12b-1 account lifecycle tables and columns deployed successfully.");
+
   await upgradePrisma.$disconnect();
   await adminPrisma.$disconnect();
 

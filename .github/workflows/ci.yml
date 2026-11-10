@@ -124,6 +124,7 @@ jobs:
           AUTH_JWT_SECRET: ci_jwt_secret_throwaway_token_min_32_chars_long
           AUTH_LOG_HMAC_SECRET: ci_hmac_secret_throwaway_token
           AUTH_GRACE_ENC_KEY: ci_grace_enc_throwaway_key_min_32_chars_long
+          APP_PUBLIC_URL: http://localhost:3000
         run: pnpm test:e2e
 
       - name: Run Build
@@ -136,6 +137,7 @@ jobs:
           AUTH_JWT_SECRET: ci_jwt_secret_throwaway_token_min_32_chars_long
           AUTH_LOG_HMAC_SECRET: ci_hmac_secret_throwaway_token
           AUTH_GRACE_ENC_KEY: ci_grace_enc_throwaway_key_min_32_chars_long
+          APP_PUBLIC_URL: http://localhost:3000
         run: |
           pnpm openapi:generate
           git diff --exit-code openapi/ docs/openapi.json

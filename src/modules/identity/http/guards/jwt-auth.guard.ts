@@ -1,6 +1,7 @@
 import {
   type CanActivate,
   type ExecutionContext,
+  ForbiddenException,
   Injectable,
   UnauthorizedException,
 } from "@nestjs/common";
@@ -37,6 +38,10 @@ export class JwtAuthGuard implements CanActivate {
     }
 
     const claims = await this.tokenService.verifyAccessToken(token);
+
+    if (claims.scope === "pwd_change_pending") {
+      throw new ForbiddenException("Password change required before accessing this resource.");
+    }
 
     // Validate that schoolId is a valid non-nil UUID
     this.tenantContext.validateTenantId(claims.schoolId);

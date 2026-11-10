@@ -311,6 +311,142 @@ export class SessionRepository {
   }
 
   /**
+   * Creates a password reset token for a user, invalidating any older unused tokens.
+   */
+  async createPasswordResetToken(params: {
+    schoolId: string;
+    userId: string;
+    tokenHash: string;
+    expiresAt: Date;
+    ipAddress?: string;
+    userAgent?: string;
+  }) {
+    return this.prisma.withTenant(params.schoolId, async (tx) => {
+      // Invalidate older unused reset tokens for this user
+      await tx.passwordResetToken.updateMany({
+        where: {
+          schoolId: params.schoolId,
+          userId: params.userId,
+          usedAt: null,
+        },
+        data: {
+          usedAt: new Date(),
+        },
+      });
+
+      return tx.passwordResetToken.create({
+        data: {
+          schoolId: params.schoolId,
+          userId: params.userId,
+          tokenHash: params.tokenHash,
+          expiresAt: params.expiresAt,
+          ipAddress: params.ipAddress ?? null,
+          userAgent: params.userAgent ?? null,
+        },
+      });
+    });
+  }
+
+  /**
+   * Finds an active, unused password reset token by token hash within tenant context.
+   */
+  async findPasswordResetToken(schoolId: string, tokenHash: string) {
+    return this.prisma.withTenant(schoolId, async (tx) => {
+      return tx.passwordResetToken.findFirst({
+        where: {
+          schoolId,
+          tokenHash,
+          usedAt: null,
+          expiresAt: { gt: new Date() },
+        },
+        include: {
+          user: true,
+        },
+      });
+    });
+  }
+
+  /**
+   * Marks a password reset token as used within tenant context.
+   */
+  async markPasswordResetTokenUsed(schoolId: string, tokenId: string): Promise<void> {
+    await this.prisma.withTenant(schoolId, async (tx) => {
+      await tx.passwordResetToken.update({
+        where: { id: tokenId, schoolId },
+        data: { usedAt: new Date() },
+      });
+    });
+  }
+
+  /**
+   * Creates an email verification token for a user, invalidating any older unused tokens.
+   */
+  async createEmailVerificationToken(params: {
+    schoolId: string;
+    userId: string;
+    tokenHash: string;
+    expiresAt: Date;
+  }) {
+    return this.prisma.withTenant(params.schoolId, async (tx) => {
+      // Invalidate older unused verification tokens for this user
+      await tx.emailVerificationToken.updateMany({
+        where: {
+          schoolId: params.schoolId,
+          userId: params.userId,
+          usedAt: null,
+        },
+        data: {
+          usedAt: new Date(),
+        },
+      });
+
+      return tx.emailVerificationToken.create({
+        data: {
+          schoolId: params.schoolId,
+          userId: params.userId,
+          tokenHash: params.tokenHash,
+          expiresAt: params.expiresAt,
+        },
+      });
+    });
+  }
+
+  /**
+   * Finds an active, unused email verification token by token hash within tenant context.
+   */
+  async findEmailVerificationToken(schoolId: string, tokenHash: string) {
+    return this.prisma.withTenant(schoolId, async (tx) => {
+      return tx.emailVerificationToken.findFirst({
+        where: {
+          schoolId,
+          tokenHash,
+          usedAt: null,
+          expiresAt: { gt: new Date() },
+        },
+        include: {
+          user: true,
+        },
+      });
+    });
+  }
+
+  /**
+   * Marks an email verification token as used and sets user email_verified_at.
+   */
+  async markEmailVerified(schoolId: string, tokenId: string, userId: string): Promise<void> {
+    await this.prisma.withTenant(schoolId, async (tx) => {
+      await tx.emailVerificationToken.update({
+        where: { id: tokenId, schoolId },
+        data: { usedAt: new Date() },
+      });
+      await tx.user.update({
+        where: { id: userId, schoolId },
+        data: { emailVerifiedAt: new Date() },
+      });
+    });
+  }
+
+  /**
    * Records a tenant audit event into partitioned audit_logs table via withTenant.
    */
   async recordAuditLog(params: {

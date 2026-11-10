@@ -81,6 +81,20 @@ Deferred maintenance chores and dependency upgrades scheduled for execution at t
 - **Rationale**: Substring pattern matching is inherently brittle, easily bypassed by minor permutations (e.g. `'s3cret'`, `'dev_jwt_secret'`), and provides a false sense of security.
 - **Checklist Item**: Replace substring blacklist checks with a formal Shannon entropy metric (e.g. minimum 3.5 bits/char) or cryptographic character-set diversity and minimum random byte validation (e.g. min 32 hex/base64 random characters, rejected if low-entropy character repetitions are detected).
 
+### 14. Scheduled Cleanup Cron Job for Expired Account Lifecycle Tokens
+- **Context**: In Phase 12b-1, `password_reset_tokens` (1h TTL) and `email_verification_tokens` (24h TTL) store single-use lifecycle tokens. When users request new tokens or redeem existing ones, previous tokens are marked with `used_at = CURRENT_TIMESTAMP(3)`. Over time, expired and consumed rows accumulate in these tables.
+- **Checklist Item**:
+  - Implement a daily scheduled BullMQ cron worker (`auth-token-pruner`) that executes:
+    `DELETE FROM password_reset_tokens WHERE (expires_at < NOW() - INTERVAL '7 days') OR (used_at IS NOT NULL AND used_at < NOW() - INTERVAL '7 days');`
+    `DELETE FROM email_verification_tokens WHERE (expires_at < NOW() - INTERVAL '7 days') OR (used_at IS NOT NULL AND used_at < NOW() - INTERVAL '7 days');`
+  - Ensure the pruner operates under appropriate maintenance roles (`progresseye_owner`) or tenant-scoped batches to prune safely without table lock contention.
+  - **Note on Permissions**: The purge job does not exist yet. In Phase 12b-1, `progresseye_app` is granted `SELECT, INSERT, UPDATE` only. When this purge job is implemented, grant `DELETE` on `password_reset_tokens` and `email_verification_tokens` to the designated maintenance/app role in that migration.
+
+### 15. Web Reset and Email Verification URL Fragment Handling (Phase 14)
+- **Context**: In Phase 12b-1, account lifecycle links place tokens exclusively in the URL fragment (`/auth/reset-password#token=<compoundToken>` and `/auth/verify-email#token=<compoundToken>`), preventing token leakage into HTTP `Referer` headers, server access logs, or browser navigation history.
+- **Requirement for Web (Phase 14)**: The frontend pages for password reset and email verification must parse the token exclusively from `window.location.hash`, include it in the POST request body (`POST /api/v1/auth/reset-password` and `POST /api/v1/auth/verify-email`), and never log the token to browser console or telemetry sinks.
+
+
 
 
 
