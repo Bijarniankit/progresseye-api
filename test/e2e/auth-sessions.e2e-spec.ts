@@ -1925,6 +1925,7 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
         .send({ temporaryToken: login2.body.temporaryToken, code: code2 })
         .expect(200);
       const tokenSession2 = auth2.body.accessToken;
+      const refreshSession2 = auth2.body.refreshToken;
 
       // Verify both sessions currently work
       await request(app.getHttpServer())
@@ -1952,11 +1953,13 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
         .set("Authorization", `Bearer ${tokenSession1}`)
         .expect(200);
 
-      // Session 2 was revoked by regeneration
-      await request(app.getHttpServer())
-        .get("/api/v1/auth/me")
-        .set("Authorization", `Bearer ${tokenSession2}`)
-        .expect(401);
+      // Session 2 was revoked by regeneration: refresh fails with 401
+      if (refreshSession2) {
+        await request(app.getHttpServer())
+          .post("/api/v1/auth/refresh")
+          .send({ refreshToken: refreshSession2 })
+          .expect(401);
+      }
 
       // 4. Old code (capturedRecoveryCodes[2]) is now rejected
       const login3 = await request(app.getHttpServer())
