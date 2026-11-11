@@ -101,6 +101,18 @@ Deferred maintenance chores and dependency upgrades scheduled for execution at t
   - Update the 2FA verification flow to record and increment attempts only upon verification failure (post-verification increment) rather than pre-verification, or partition attempt tracking with an IP dimension (`auth:2fa:attempts:<userId>:<ipHash>`).
   - Ensure brute-force resistance remains airtight while completely eliminating the risk of a malicious actor burning a victim's attempt budget using an acquired `2fa_pending` token.
 
+### 17. Permission Cache Invalidation Race Between Pre-Commit Eviction and Transaction Commit
+- **Context**: In Phase 13a, `evictUser` and `evictUsers` run inside the `withTenant` transaction callback before commit. If an eviction failure occurs, the database transaction rolls back, preventing stale cache on Redis failures. However, an interleaving read arriving immediately after eviction but before PostgreSQL transaction commit could re-cache pre-update permissions from the database.
+- **Checklist Item**:
+  - Implement a dual-eviction strategy (evicting pre-commit to detect Redis failures and again post-commit via transactional event/hook), or transition to a versioned tenant permission cache key (e.g. `auth:perm:<schoolId>:<userId>:<permVersion>` where the user's `permission_version` counter is atomically bumped in PostgreSQL upon role assignment/mutation).
+
+### 18. Explicit 503 Service Unavailable on Cache Eviction Failure
+- **Context**: In Phase 13a, when Redis is unavailable or eviction fails during a role mutation (`assignRole`, `unassignRole`, `updateRole`, `deleteRole`, `deactivateUser`), `PermissionCacheService` throws an `Error`, causing the transaction to abort and the exception filter to return HTTP 500 `InternalServerErrorException`.
+- **Checklist Item**:
+  - Wrap cache eviction failures or catch `RedisUnavailableException` / cache errors in the mutation flow and map them to HTTP 503 `ServiceUnavailableException` with an explicit problem detail error code (e.g. `SERVICE_UNAVAILABLE` / `CACHE_EVICTION_FAILED`).
+  - Provide a clear message to clients indicating that upstream caching infrastructure is temporarily unavailable and that the mutation was aborted safely without modifying database state.
+
+
 
 
 
