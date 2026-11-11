@@ -13,6 +13,7 @@ import {
 import { ApiBody, ApiOperation, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
 import type { FastifyReply, FastifyRequest } from "fastify";
+import { Public } from "../../../common/decorators/public.decorator";
 import { ZodValidationPipe } from "../../../common/pipes/zod-validation.pipe";
 import { PublicLeadService } from "../application/public-lead.service";
 import {
@@ -33,6 +34,7 @@ export class PublicController {
   constructor(private readonly leadService: PublicLeadService) {}
 
   @Post("contact")
+  @Public("Public lead inquiry submission for prospective institutions")
   @HttpCode(HttpStatus.CREATED)
   @Throttle({ default: { limit: 5, ttl: 900000 } }) // 5 requests / 15 min
   @UsePipes(new ZodValidationPipe(ContactLeadSchema))
@@ -81,6 +83,7 @@ export class PublicController {
   }
 
   @Post("demo")
+  @Public("Public institutional demo scheduling request")
   @HttpCode(HttpStatus.CREATED)
   @Throttle({ default: { limit: 5, ttl: 900000 } }) // 5 requests / 15 min
   @UsePipes(new ZodValidationPipe(DemoLeadSchema))
@@ -129,6 +132,7 @@ export class PublicController {
   }
 
   @Post("newsletter")
+  @Public("Public newsletter subscription endpoint")
   @HttpCode(HttpStatus.CREATED)
   @Throttle({ default: { limit: 10, ttl: 900000 } }) // 10 requests / 15 min
   @UsePipes(new ZodValidationPipe(NewsletterLeadSchema))

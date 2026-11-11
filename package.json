@@ -25,6 +25,7 @@
     "openapi:generate": "ts-node src/scripts/generate-openapi.ts"
   },
   "dependencies": {
+    "@casl/ability": "6.7.5",
     "@fastify/cookie": "10.0.1",
     "@fastify/helmet": "^13.2.0",
     "@fastify/static": "^10.1.6",
