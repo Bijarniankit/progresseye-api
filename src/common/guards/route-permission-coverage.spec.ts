@@ -10,12 +10,18 @@ import { IS_PUBLIC_KEY, PUBLIC_JUSTIFICATION_KEY } from "../decorators/public.de
 import { REQUIRED_PERMISSIONS_KEY } from "../decorators/require-permission.decorator";
 
 describe("Route Permission Coverage (Phase 13)", () => {
-  let moduleRef: TestingModule;
+  let moduleRef: TestingModule | undefined;
   let discoveryService: DiscoveryService;
   let metadataScanner: MetadataScanner;
   let reflector: Reflector;
 
+  const originalDatabaseUrl = process.env.DATABASE_URL;
+
   beforeAll(async () => {
+    // Provide a dummy DATABASE_URL if absent in unit test environments without .env
+    process.env.DATABASE_URL =
+      process.env.DATABASE_URL || "postgresql://postgres:postgres@localhost:5432/test_db";
+
     moduleRef = await Test.createTestingModule({
       imports: [AppModule, DiscoveryModule],
     }).compile();
@@ -26,7 +32,14 @@ describe("Route Permission Coverage (Phase 13)", () => {
   });
 
   afterAll(async () => {
-    await moduleRef.close();
+    if (moduleRef) {
+      await moduleRef.close();
+    }
+    if (originalDatabaseUrl !== undefined) {
+      process.env.DATABASE_URL = originalDatabaseUrl;
+    } else {
+      delete process.env.DATABASE_URL;
+    }
   });
 
   it("should discover all registered controllers and enforce that 100% of route handlers declare @RequirePermission, @Authenticated, or justified @Public", () => {
