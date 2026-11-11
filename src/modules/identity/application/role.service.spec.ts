@@ -54,6 +54,10 @@ describe("RoleService", () => {
       },
       user: {
         findFirst: jest.fn(),
+        update: jest.fn().mockImplementation((args: any) => ({
+          id: args.where?.id || targetUserId,
+          ...args.data,
+        })),
       },
       auditLog: {
         create: jest.fn(),
@@ -264,6 +268,143 @@ describe("RoleService", () => {
           permissionCodes: ["identity.role.read"], // Stripping admin permissions
         }),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    it("should prevent deactivating the last active admin of the school", async () => {
+      mockPrisma.user.findFirst.mockResolvedValue({
+        id: targetUserId,
+        schoolId,
+        isActive: true,
+      });
+
+      // targetUserId is the only active admin
+      mockPrisma.role.findMany.mockResolvedValue([
+        {
+          id: "principal-role-id",
+          slug: "principal",
+          rolePermissions: [
+            { permission: { code: "identity.role.assign" } },
+            { permission: { code: "tenancy.school.update" } },
+          ],
+        },
+      ]);
+      mockPrisma.userRole.findMany.mockResolvedValue([{ userId: targetUserId }]);
+
+      await expect(service.deactivateUser(schoolId, actorUserId, targetUserId)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it("should prevent deleting an admin role when no other active admin exists", async () => {
+      mockPrisma.role.findFirst.mockResolvedValue({
+        id: "custom-admin-role-id",
+        slug: "custom-admin",
+        name: "Custom Admin",
+        isSystem: false,
+        rolePermissions: [
+          { permission: { code: "identity.role.assign" } },
+          { permission: { code: "tenancy.school.update" } },
+        ],
+      });
+
+      mockPrisma.userRole.findMany.mockResolvedValue([]); // 0 assigned users
+      mockPrisma.role.findMany.mockResolvedValue([]); // No other admin roles
+
+      await expect(
+        service.deleteRole(schoolId, actorUserId, "custom-admin-role-id"),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe("Permission Cache Eviction on Mutations", () => {
+    it("should evict cached permissions for assigned users on role delete", async () => {
+      mockPrisma.role.findFirst.mockResolvedValue({
+        id: "custom-teacher-id",
+        slug: "custom-teacher",
+        name: "Custom Teacher",
+        isSystem: false,
+        rolePermissions: [{ permission: { code: "identity.role.read" } }],
+      });
+
+      mockPrisma.userRole.findMany.mockResolvedValue([{ userId: "user-1" }, { userId: "user-2" }]);
+
+      await service.deleteRole(schoolId, actorUserId, "custom-teacher-id");
+      expect(mockCache.evictUsers).toHaveBeenCalledWith(schoolId, ["user-1", "user-2"]);
+    });
+
+    it("should evict cached permissions for target user on role assign and unassign", async () => {
+      mockPrisma.role.findFirst.mockResolvedValue({
+        id: "role-1",
+        name: "Viewer",
+        slug: "viewer",
+        isSystem: false,
+        rolePermissions: [{ permission: { code: "identity.role.read" } }],
+      });
+      mockPrisma.user.findFirst.mockResolvedValue({
+        id: targetUserId,
+        schoolId,
+        isActive: true,
+      });
+      mockPrisma.userRole.upsert.mockResolvedValue({ id: "ur-1" });
+      mockCache.get.mockResolvedValue(["identity.role.read"]); // Actor perms
+
+      // 1. Assign
+      await service.assignRole(schoolId, actorUserId, {
+        userId: targetUserId,
+        roleId: "role-1",
+      });
+      expect(mockCache.evictUser).toHaveBeenCalledWith(schoolId, targetUserId);
+
+      // 2. Unassign
+      await service.unassignRole(schoolId, actorUserId, {
+        userId: targetUserId,
+        roleId: "role-1",
+      });
+      expect(mockCache.evictUser).toHaveBeenCalledWith(schoolId, targetUserId);
+    });
+
+    it("should evict cached permissions for target user on user deactivation", async () => {
+      mockPrisma.user.findFirst.mockResolvedValue({
+        id: targetUserId,
+        schoolId,
+        isActive: true,
+      });
+      // Another admin exists
+      mockPrisma.role.findMany.mockResolvedValue([
+        {
+          id: "principal-id",
+          slug: "principal",
+          rolePermissions: [],
+        },
+      ]);
+      mockPrisma.userRole.findMany.mockResolvedValue([
+        { userId: targetUserId },
+        { userId: actorUserId }, // 2 admins
+      ]);
+
+      await service.deactivateUser(schoolId, actorUserId, targetUserId);
+      expect(mockCache.evictUser).toHaveBeenCalledWith(schoolId, targetUserId);
+    });
+
+    it("should evict cached permissions for all users holding role on role permission update", async () => {
+      mockPrisma.role.findFirst.mockResolvedValue({
+        id: "custom-role-1",
+        name: "Custom Role",
+        slug: "custom-role",
+        isSystem: false,
+        rolePermissions: [{ permission: { code: "identity.role.read" } }],
+      });
+      mockPrisma.userRole.findMany
+        .mockResolvedValueOnce([]) // Actor does not hold role
+        .mockResolvedValueOnce([{ userId: "user-a" }, { userId: "user-b" }]); // Assigned users
+
+      mockCache.get.mockResolvedValue(["identity.role.read", "identity.role.create"]); // Actor perms
+
+      await service.updateRole(schoolId, actorUserId, "custom-role-1", {
+        permissionCodes: ["identity.role.read", "identity.role.create"],
+      });
+
+      expect(mockCache.evictUsers).toHaveBeenCalledWith(schoolId, ["user-a", "user-b"]);
     });
   });
 });

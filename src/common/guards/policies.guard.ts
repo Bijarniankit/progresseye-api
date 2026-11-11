@@ -9,6 +9,7 @@ import { Reflector } from "@nestjs/core";
 import type { FastifyRequest } from "fastify";
 import { RoleService } from "../../modules/identity/application/role.service";
 import { AbilityFactory } from "../../modules/identity/domain/ability.factory";
+import { IS_AUTHENTICATED_KEY } from "../decorators/authenticated.decorator";
 import { IS_PUBLIC_KEY } from "../decorators/public.decorator";
 import {
   type PermissionRequirement,
@@ -39,6 +40,20 @@ export class PoliciesGuard implements CanActivate {
     ]);
 
     if (isPublic) {
+      return true;
+    }
+
+    // Check if explicitly marked Authenticated (requires valid session, exempt from RBAC)
+    const isAuthenticated = this.reflector.getAllAndOverride<boolean>(IS_AUTHENTICATED_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+
+    if (isAuthenticated) {
+      const request = context.switchToHttp().getRequest<RequestWithUser>();
+      if (!request.user || !request.user.userId || !request.user.schoolId) {
+        throw new UnauthorizedException("Authentication required to access this resource");
+      }
       return true;
     }
 

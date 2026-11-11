@@ -16,6 +16,7 @@ import {
 } from "@nestjs/common";
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from "@nestjs/swagger";
 import type { FastifyReply, FastifyRequest } from "fastify";
+import { Authenticated } from "../../../common/decorators/authenticated.decorator";
 import { Public } from "../../../common/decorators/public.decorator";
 import { ZodValidationPipe } from "../../../common/pipes/zod-validation.pipe";
 import { AppConfigService } from "../../../config/config.service";
@@ -201,7 +202,7 @@ export class AuthController {
   }
 
   @Post("logout-all")
-  @Public("Authenticated user session termination across all devices")
+  @Authenticated("Authenticated user session termination across all devices")
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(TenantContextInterceptor)
   @ApiBearerAuth()
@@ -225,7 +226,7 @@ export class AuthController {
   }
 
   @Get("sessions")
-  @Public("Authenticated user session inspection")
+  @Authenticated("Authenticated user session inspection")
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(TenantContextInterceptor)
   @ApiBearerAuth()
@@ -237,7 +238,7 @@ export class AuthController {
   }
 
   @Delete("sessions/:id")
-  @Public("Authenticated user single session revocation")
+  @Authenticated("Authenticated user single session revocation")
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(TenantContextInterceptor)
   @ApiBearerAuth()
@@ -254,7 +255,7 @@ export class AuthController {
   }
 
   @Post("change-password")
-  @Public("Authenticated user password change and session invalidation")
+  @Authenticated("Authenticated user password change and session invalidation")
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(TenantContextInterceptor)
   @HttpCode(HttpStatus.OK)
@@ -276,7 +277,7 @@ export class AuthController {
   }
 
   @Get("me")
-  @Public("Authenticated user self profile retrieval")
+  @Authenticated("Authenticated user self profile retrieval")
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(TenantContextInterceptor)
   @ApiBearerAuth()
@@ -393,7 +394,7 @@ export class AuthController {
   }
 
   @Post("2fa/setup")
-  @Public("Authenticated user two-factor setup initialization")
+  @Authenticated("Authenticated user two-factor setup initialization")
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -405,7 +406,7 @@ export class AuthController {
   }
 
   @Post("2fa/enable")
-  @Public("Authenticated user two-factor enablement with first verified code")
+  @Authenticated("Authenticated user two-factor enablement with first verified code")
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -515,7 +516,7 @@ export class AuthController {
   }
 
   @Post("2fa/disable")
-  @Public("Authenticated user two-factor disablement")
+  @Authenticated("Authenticated user two-factor disablement")
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -529,7 +530,7 @@ export class AuthController {
   }
 
   @Post("2fa/recovery/regenerate")
-  @Public("Authenticated user recovery codes regeneration")
+  @Authenticated("Authenticated user recovery codes regeneration")
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

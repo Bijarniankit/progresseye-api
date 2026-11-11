@@ -60,6 +60,9 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
       if (!isLive) throw new Error("offline");
       dbAvailable = true;
     } catch {
+      if (process.env.CI) {
+        throw new Error("PostgreSQL database connection is required in CI environment");
+      }
       dbAvailable = false;
       console.log(
         "Local environment without Docker: PostgreSQL unavailable; real PostgreSQL RLS assertions verified in GitHub Actions CI.",
@@ -555,6 +558,9 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
     });
 
     it("Last-Admin Concurrency Test: concurrent unassign attempts cannot leave zero admins", async () => {
+      if (process.env.CI && !dbAvailable) {
+        throw new Error("Database is required in CI for concurrency testing");
+      }
       if (!dbAvailable) return;
 
       const principalRole = await prisma.role.findFirst({
@@ -581,7 +587,7 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
         },
       });
 
-      // Fire two concurrent unassignments
+      // Fire two concurrent unassignments that would leave zero admins if unserialized
       const [res1, res2] = await Promise.all([
         request(app.getHttpServer())
           .post("/api/v1/identity/roles/unassign")
@@ -593,15 +599,18 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
           .send({ userId: admin2Id, roleId: principalRole!.id }),
       ]);
 
-      // At least one must fail with 400 Bad Request to guarantee never zero admins
-      const hasFailure = res1.status === 400 || res2.status === 400;
-      expect(hasFailure).toBe(true);
+      // Exactly one must succeed (200) and one must fail (400 Bad Request) to guarantee never zero admins
+      const statuses = [res1.status, res2.status].sort();
+      expect(statuses).toEqual([200, 400]);
 
-      // Confirm in DB that at least 1 active admin still exists
+      const failedRes = res1.status === 400 ? res1 : res2;
+      expect(failedRes.body.detail ?? failedRes.body.message).toMatch(/CANNOT_REMOVE_LAST_ADMIN/);
+
+      // Confirm in DB that exactly 1 active admin still exists
       const remainingAdmins = await prisma.userRole.count({
         where: { schoolId: schoolAId, roleId: principalRole!.id },
       });
-      expect(remainingAdmins).toBeGreaterThanOrEqual(1);
+      expect(remainingAdmins).toBe(1);
 
       // Restore principalA as an active administrator for subsequent test cases
       await prisma.userRole.upsert({
@@ -623,6 +632,111 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
         .getClient()
         ?.del(`auth:perm:${schoolAId}:${principalAId}`)
         .catch(() => {});
+    });
+
+    it("Last-Admin Deactivation Guard: rejects deactivating the last active administrator", async () => {
+      if (process.env.CI && !dbAvailable) {
+        throw new Error("Database is required in CI");
+      }
+      if (!dbAvailable) return;
+
+      const res = await request(app.getHttpServer())
+        .post(`/api/v1/identity/users/${principalAId}/deactivate`)
+        .set("Authorization", `Bearer ${principalAToken}`)
+        .expect(400);
+
+      expect(res.body.detail ?? res.body.message).toMatch(/CANNOT_REMOVE_LAST_ADMIN/);
+
+      const user = await prisma.user.findUnique({ where: { id: principalAId } });
+      expect(user?.isActive).toBe(true);
+    });
+
+    it("Last-Admin Role Edit Guard: rejects stripping admin permissions from role when it would leave zero admins", async () => {
+      if (process.env.CI && !dbAvailable) {
+        throw new Error("Database is required in CI");
+      }
+      if (!dbAvailable) return;
+
+      // Create a custom admin role
+      const customAdmin = await prisma.role.create({
+        data: {
+          schoolId: schoolAId,
+          name: "Sole Admin Role",
+          slug: "sole-admin-" + uuidv7().substring(0, 8),
+          isSystem: false,
+        },
+      });
+      const perms = await prisma.permission.findMany({
+        where: {
+          code: {
+            in: [
+              "identity.role.assign",
+              "tenancy.school.update",
+              "identity.role.read",
+              "identity.role.update",
+            ],
+          },
+        },
+      });
+      for (const p of perms) {
+        await prisma.rolePermission.create({
+          data: { schoolId: schoolAId, roleId: customAdmin.id, permissionId: p.id },
+        });
+      }
+
+      // Temporarily swap principalA's role to customAdmin
+      const principalRole = await prisma.role.findFirst({
+        where: { schoolId: schoolAId, slug: "principal" },
+      });
+      await prisma.userRole.create({
+        data: { schoolId: schoolAId, userId: principalAId, roleId: customAdmin.id },
+      });
+      await prisma.userRole.deleteMany({
+        where: { schoolId: schoolAId, userId: principalAId, roleId: principalRole!.id },
+      });
+      await redisService.getClient()?.del(`auth:perm:${schoolAId}:${principalAId}`);
+
+      // Attempt to update customAdmin to strip admin permissions (leaving only identity.role.read)
+      const res = await request(app.getHttpServer())
+        .put(`/api/v1/identity/roles/${customAdmin.id}`)
+        .set("Authorization", `Bearer ${principalAToken}`)
+        .send({
+          name: "Demoted Role",
+          permissionCodes: ["identity.role.read", "identity.role.update"],
+        })
+        .expect(400);
+
+      expect(res.body.detail ?? res.body.message).toMatch(/CANNOT_REMOVE_LAST_ADMIN/);
+
+      // Restore principal role
+      await prisma.userRole.create({
+        data: { schoolId: schoolAId, userId: principalAId, roleId: principalRole!.id },
+      });
+      await prisma.userRole.deleteMany({
+        where: { schoolId: schoolAId, userId: principalAId, roleId: customAdmin.id },
+      });
+      await prisma.rolePermission.deleteMany({
+        where: { schoolId: schoolAId, roleId: customAdmin.id },
+      });
+      await prisma.role.delete({ where: { id: customAdmin.id } });
+      await redisService.getClient()?.del(`auth:perm:${schoolAId}:${principalAId}`);
+    });
+
+    it("Last-Admin Role Deletion Guard: rejects deleting an admin role when no other active admin exists", async () => {
+      if (process.env.CI && !dbAvailable) {
+        throw new Error("Database is required in CI");
+      }
+      if (!dbAvailable) return;
+
+      // When only 1 admin role exists (e.g. principal) and is system, cannot delete
+      const principalRole = await prisma.role.findFirst({
+        where: { schoolId: schoolAId, slug: "principal" },
+      });
+      const delSysRes = await request(app.getHttpServer())
+        .delete(`/api/v1/identity/roles/${principalRole!.id}`)
+        .set("Authorization", `Bearer ${principalAToken}`)
+        .expect(403);
+      expect(delSysRes.body.detail ?? delSysRes.body.message).toMatch(/Built-in system roles/);
     });
 
     it("Stale Token Defense: revoked role immediately blocks unexpired JWT on next request", async () => {

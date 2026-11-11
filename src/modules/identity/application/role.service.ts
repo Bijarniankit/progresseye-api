@@ -517,17 +517,10 @@ export class RoleService {
       // Row lock active users
       await tx.$queryRaw`SELECT id FROM users WHERE school_id = ${schoolId}::uuid AND is_active = true FOR UPDATE`;
 
-      const assignedCount = await tx.userRole.count({
-        where: { schoolId, roleId },
-      });
-      if (assignedCount > 0) {
-        throw new BadRequestException(
-          `Cannot delete role '${role.name}': it is currently assigned to ${assignedCount} user(s)`,
-        );
-      }
-
       // Check last-admin guard if role has admin permissions
-      const grantsAdmin = ADMIN_REQUIRED_PERMISSIONS.every((p) => role.permissions.includes(p));
+      const grantsAdmin =
+        role.slug === "principal" ||
+        ADMIN_REQUIRED_PERMISSIONS.every((p) => role.permissions.includes(p));
       if (grantsAdmin) {
         const remainingAdmins = await this.countOtherActiveAdmins(tx, schoolId, roleId);
         if (remainingAdmins <= 0) {
@@ -537,13 +530,27 @@ export class RoleService {
         }
       }
 
+      const assignedUsers = await tx.userRole.findMany({
+        where: { schoolId, roleId },
+        select: { userId: true },
+      });
+      const userIds = assignedUsers.map((u) => u.userId);
+
       await tx.rolePermission.deleteMany({
+        where: { schoolId, roleId },
+      });
+
+      await tx.userRole.deleteMany({
         where: { schoolId, roleId },
       });
 
       await tx.role.delete({
         where: { id: roleId },
       });
+
+      if (userIds.length > 0) {
+        await this.cache.evictUsers(schoolId, userIds);
+      }
 
       // Audit log
       await tx.auditLog.create({
@@ -677,6 +684,56 @@ export class RoleService {
             roleId: dto.roleId,
             roleName: role.name,
           },
+        },
+      });
+
+      return { success: true };
+    });
+  }
+
+  /**
+   * Deactivates a user with last-admin lockout protection and row locking.
+   */
+  async deactivateUser(schoolId: string, actorUserId: string, targetUserId: string) {
+    return this.prisma.withTenant(schoolId, async (tx) => {
+      // Row lock active users to prevent race condition leaving 0 admins
+      await tx.$queryRaw`SELECT id FROM users WHERE school_id = ${schoolId}::uuid AND is_active = true FOR UPDATE`;
+
+      const user = await tx.user.findFirst({
+        where: { id: targetUserId, schoolId, deletedAt: null },
+      });
+      if (!user) {
+        throw new NotFoundException("Target user not found in this school");
+      }
+
+      if (!user.isActive) {
+        return { success: true, message: "User is already inactive" };
+      }
+
+      const activeAdmins = await this.getActiveAdminUserIds(tx, schoolId);
+      if (activeAdmins.includes(targetUserId) && activeAdmins.length <= 1) {
+        throw new BadRequestException(
+          "Cannot deactivate user: this user is the last active administrator of the school (CANNOT_REMOVE_LAST_ADMIN)",
+        );
+      }
+
+      await tx.user.update({
+        where: { id: targetUserId },
+        data: { isActive: false },
+      });
+
+      // Evict target user cache immediately
+      await this.cache.evictUser(schoolId, targetUserId);
+
+      // Audit log
+      await tx.auditLog.create({
+        data: {
+          schoolId,
+          userId: actorUserId,
+          action: "USER_DEACTIVATE",
+          resource: "users",
+          resourceId: targetUserId,
+          payload: { targetUserId },
         },
       });
 

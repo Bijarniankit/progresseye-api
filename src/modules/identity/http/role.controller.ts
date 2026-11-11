@@ -139,6 +139,15 @@ export class RoleController {
     return this.roleService.unassignRole(req.user.schoolId, req.user.userId, dto);
   }
 
+  @Post("users/:id/deactivate")
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission("update", "identity.user")
+  @ApiOperation({ summary: "Deactivate a user with last-admin lockout protection" })
+  @ApiResponse({ status: 200, description: "User deactivated" })
+  async deactivateUser(@Req() req: AuthenticatedRequest, @Param("id") id: string) {
+    return this.roleService.deactivateUser(req.user.schoolId, req.user.userId, id);
+  }
+
   @Get("users/me/effective-permissions")
   @RequirePermission("read", "identity.role")
   @ApiOperation({ summary: "Get effective permissions and roles for current authenticated user" })
