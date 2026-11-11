@@ -25,6 +25,7 @@ ProgressEye requires multi-factor authentication (MFA) via RFC 6238 Time-based O
 
 ### 3. Replay Protection and Redis-Down Degradation
 - **Replay Protection**: When a valid code matches a time step, Redis records an atomic key via `SET auth:totp:replay:<userId>:<timeStep> 1 EX 120 NX`.
+  - Replay TTL is set to 120 seconds (spanning the full ±1 step window: past step -30s, current step 0s, next step +30s, plus safety margin for step boundaries) vs the originally planned 90 seconds.
   - If the key already exists, the code is treated as replayed and rejected.
 - **Redis-Down Degradation Mode**:
   - If Redis is unavailable during `POST /api/v1/auth/2fa/verify`, the endpoint throws `503 ServiceUnavailableException` (`"Authentication service temporarily unavailable. Please try again."`).
@@ -47,9 +48,14 @@ ProgressEye requires multi-factor authentication (MFA) via RFC 6238 Time-based O
   - Uniqueness is enforced on `(user_id, code_hash)` rather than a global unique constraint on `code_hash` alone, precluding cross-user hash collisions while preventing intra-user duplicate codes.
 - **Single-Use**:
   - Redemption atomically sets `used_at = CURRENT_TIMESTAMP(3)`. Replayed recovery codes are rejected.
-- **Shared Attempt Cap**:
+- **Shared Attempt Cap & Pre-Increment Risk**:
   - A single Redis counter (`auth:2fa:attempts:<userId>`, TTL 15 minutes) limits failed attempts across both TOTP and recovery code verification to a maximum of 5 attempts.
-  - Successful verification resets the counter (`DEL auth:2fa:attempts:<userId>`).
+  - **Identified Risk**: Because `checkAndIncrementAttemptCap` executes before code verification, any actor holding a victim's temporary `2fa_pending` token could submit 5 bogus requests to deliberately exhaust the victim's attempt budget and trigger a 15-minute lockout (Denial of Service).
+  - **Mitigations**:
+    1. Short token lifetime: `2fa_pending` token expires in 5 minutes (`JWT_2FA_PENDING_EXPIRY = '5m'`).
+    2. Multi-layered anti-abuse: Pre-login abuse controls (`AbusePreventionService`) enforce per-IP failure tracking and progressive delays, bounding token acquisition and automated abuse.
+    3. Reset on success: Valid code submission immediately resets the counter (`DEL auth:2fa:attempts:<userId>`).
+    4. Future roadmap mitigation: Record attempt increment only on verification failure (post-verification increment) or partition attempt budgets per client IP hash.
 - **Generic Error Policy**:
   - In alignment with Amendment 1, any failure during 2FA verification (wrong code, replayed code, wrong recovery code, reused recovery code, expired temporary token, or cap exceeded) returns an identical generic error:
     `401 Unauthorized: "Invalid two-factor authentication credentials."`
