@@ -236,6 +236,41 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
       expect(res.body.some((r: any) => r.slug === "principal" && r.isSystem === true)).toBe(true);
     });
 
+    it("Idempotent Built-in Role Seeding: re-seeding built-in roles under real tenant context is idempotent", async () => {
+      if (!dbAvailable) return;
+
+      const rolesBefore = await prisma.role.count({
+        where: { schoolId: schoolAId, isSystem: true },
+      });
+      expect(rolesBefore).toBe(13);
+
+      // Re-seed built-in roles for school A a second time
+      await roleService.seedBuiltInRolesForSchool(schoolAId);
+
+      const rolesAfterSecondSeed = await prisma.role.count({
+        where: { schoolId: schoolAId, isSystem: true },
+      });
+      expect(rolesAfterSecondSeed).toBe(13);
+
+      // Re-seed a third time to strictly guarantee repeatability
+      await roleService.seedBuiltInRolesForSchool(schoolAId);
+
+      const rolesAfterThirdSeed = await prisma.role.count({
+        where: { schoolId: schoolAId, isSystem: true },
+      });
+      expect(rolesAfterThirdSeed).toBe(13);
+
+      // Verify all 13 built-in role slugs exist and have assigned permissions
+      const seededRoles = await prisma.role.findMany({
+        where: { schoolId: schoolAId, isSystem: true },
+        include: { rolePermissions: true },
+      });
+      expect(seededRoles).toHaveLength(13);
+      for (const r of seededRoles) {
+        expect(r.rolePermissions.length).toBeGreaterThan(0);
+      }
+    });
+
     it("POST /api/v1/identity/roles: creates a custom role with valid permissions", async () => {
       if (!dbAvailable) return;
 

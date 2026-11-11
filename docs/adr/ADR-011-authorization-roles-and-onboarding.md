@@ -22,9 +22,15 @@ The application enforces strict PostgreSQL Row-Level Security (`progresseye_app`
 - Permissions follow the canonical hierarchy: `<module>.<resource>.<action>` (e.g., `identity.user.create`, `tenancy.role.update`, `academic.class.read`).
 - The `permissions` table is a global system catalog without `school_id`. The application role `progresseye_app` has `SELECT` privileges only (`REVOKE INSERT, UPDATE, DELETE`).
 - Permissions are seeded from code (`permissions.catalog.ts`) using the schema owner role (`progresseye_owner`).
+- **Phase 13a Database Scope**:
+  - Phase 13a introduces zero database tables and zero database migrations. The underlying RBAC tables (`roles`, `permissions`, `role_permissions`, `user_roles`) were created in Phase 11 (`20261108000000_tenancy_and_rls`) with complete PostgreSQL Row-Level Security policies and indexes.
+  - Future tables `platform_audit_logs`, `school_invites`, `school_features`, `subscription_plans`, and the `SECURITY DEFINER` provisioning function (`platform_provision_school`) live in **Phase 13b**.
 - **Segregation of Platform vs Tenant Permissions**:
   - Permissions prefixed with `platform.` (such as `platform.school.create`, `platform.school.read`, `platform.plan.manage`) are reserved exclusively for platform operations.
-  - The `RoleService` enforces that `platform.*` permissions can NEVER be granted to, cloned into, or associated with tenant roles. Any attempt to associate a `platform.*` permission with a tenant role is rejected with `403 Forbidden` (`PLATFORM_PERMISSION_DENIED`).
+  - **Mechanism**: The `RoleService` (`createRole`, `cloneRole`, `updateRole`) programmatically inspects all requested permission codes using `isPlatformPermission(code)` (`code.startsWith("platform.")`). If any platform permission is detected in a tenant role operation, it immediately throws `ForbiddenException("Platform permissions (platform.*) cannot be assigned to tenant roles")`.
+  - **Verification Tests**:
+    - Unit test: `RoleService -> Anti-Escalation Engine -> should reject creating role with platform.* permissions` (`src/modules/identity/application/role.service.spec.ts`)
+    - E2E test: `Phase 13a: Authorization & Role Designer E2E Suite -> Attack & Security Verification -> Platform Permission Isolation: tenant admin cannot create role with platform.* permissions` (`test/e2e/authorization-roles.e2e-spec.ts`)
 
 ### 2. Built-in Roles & Idempotent Tenant Seeding
 - Exactly 13 built-in system roles are defined:
@@ -47,7 +53,8 @@ The application enforces strict PostgreSQL Row-Level Security (`progresseye_app`
   - Seeding is strictly idempotent: re-running the seed executes upserts on `(school_id, slug)` and updates `role_permissions` without duplicating rows or raising unique constraint errors.
 
 ### 3. CASL Ability Engine & Attribute Stubs
-- `@casl/ability` is pinned to exact version `6.7.5` (`pnpm audit --prod --audit-level high` verified with 0 vulnerabilities).
+- `@casl/ability` is pinned to exact version `6.7.5` in `package.json` (`"@casl/ability": "6.7.5"`) to resolve prototype pollution vulnerability GHSA-x9vf-53q3-cvx6 present in versions `<= 6.7.4`.
+- Dependency audit verified via `pnpm audit --prod --audit-level high` yielding 0 high and 0 critical vulnerabilities (`12 vulnerabilities found; Severity: 5 low | 7 moderate`).
 - An `AbilityFactory` compiles a user's effective permissions into an executable CASL `AppAbility`.
 - **Attribute Conditions**: Attribute-based constraints (such as `assignedSections` for teachers, `linkedChildren` for parents, and `self` for students) are evaluated synchronously in memory against authenticated request user context properties.
 - **Phase 15/16 Forward Compatibility**: In Phase 13, attribute conditions are defined as typed stubs that inspect user context metadata, avoiding premature SQL joins against tables that do not yet exist (e.g. `sections`, `guardians`).
