@@ -1,5 +1,6 @@
 import { Controller, Get, ServiceUnavailableException } from "@nestjs/common";
 import { ApiOperation, ApiResponse, ApiTags } from "@nestjs/swagger";
+import { Public } from "../../../common/decorators/public.decorator";
 import { PrismaService } from "../../../infra/prisma/prisma.service";
 import { RedisService } from "../../../infra/redis/redis.service";
 
@@ -12,6 +13,7 @@ export class HealthController {
   ) {}
 
   @Get("live")
+  @Public("Liveness probe accessible to container orchestration without authentication")
   @ApiOperation({
     summary: "Liveness probe",
     description: "Returns 200 if the process is up and running.",
@@ -25,6 +27,7 @@ export class HealthController {
   }
 
   @Get("ready")
+  @Public("Readiness probe accessible to load balancers and orchestrators without authentication")
   @ApiOperation({
     summary: "Readiness probe",
     description:

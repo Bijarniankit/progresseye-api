@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { Controller, Get, Headers, NotFoundException, Req } from "@nestjs/common";
 import { ApiExcludeController } from "@nestjs/swagger";
 import type { FastifyRequest } from "fastify";
+import { Public } from "../../../common/decorators/public.decorator";
 import { AppConfigService } from "../../../config/config.service";
 
 @ApiExcludeController()
@@ -10,6 +11,9 @@ export class DiagnosticController {
   constructor(private readonly config: AppConfigService) {}
 
   @Get("hop-trace")
+  @Public(
+    "Diagnostic hop trace for infrastructure telemetry; gated by DIAGNOSTICS_ENABLED and disabled in production",
+  )
   getHopTrace(@Req() req: FastifyRequest, @Headers("x-forwarded-for") xForwardedFor?: string) {
     // Explicit opt-in gate: DIAGNOSTICS_ENABLED must be true, strictly prohibited in production
     if (this.config.isProduction || !this.config.get("DIAGNOSTICS_ENABLED")) {

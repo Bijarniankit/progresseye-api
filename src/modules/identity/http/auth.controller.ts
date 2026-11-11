@@ -16,6 +16,7 @@ import {
 } from "@nestjs/common";
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from "@nestjs/swagger";
 import type { FastifyReply, FastifyRequest } from "fastify";
+import { Public } from "../../../common/decorators/public.decorator";
 import { ZodValidationPipe } from "../../../common/pipes/zod-validation.pipe";
 import { AppConfigService } from "../../../config/config.service";
 import { AuthService } from "../application/auth.service";
@@ -65,6 +66,7 @@ export class AuthController {
   }
 
   @Post("login")
+  @Public("User authentication with school slug and credentials")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Authenticate with school slug and credentials" })
   @ApiResponse({ status: 200, type: LoginResponseDto })
@@ -105,7 +107,7 @@ export class AuthController {
       };
     }
 
-    // Set HTTP-only refresh cookie (no Partitioned per Amendment 5)
+    // Set HTTP-only refresh cookie
     res.setCookie("pe_refresh_token", result.compoundRefreshToken!, {
       path: "/api/v1/auth",
       httpOnly: true,
@@ -123,6 +125,7 @@ export class AuthController {
   }
 
   @Post("refresh")
+  @Public("Session token refresh via pe_refresh_token cookie or body")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Rotate refresh token and obtain new access token" })
   @ApiResponse({ status: 200, type: RefreshResponseDto })
@@ -172,6 +175,7 @@ export class AuthController {
   }
 
   @Post("logout")
+  @Public("Session termination via refresh token or cookie")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Terminate current session" })
   async logout(
@@ -197,6 +201,7 @@ export class AuthController {
   }
 
   @Post("logout-all")
+  @Public("Authenticated user session termination across all devices")
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(TenantContextInterceptor)
   @ApiBearerAuth()
@@ -220,6 +225,7 @@ export class AuthController {
   }
 
   @Get("sessions")
+  @Public("Authenticated user session inspection")
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(TenantContextInterceptor)
   @ApiBearerAuth()
@@ -231,6 +237,7 @@ export class AuthController {
   }
 
   @Delete("sessions/:id")
+  @Public("Authenticated user single session revocation")
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(TenantContextInterceptor)
   @ApiBearerAuth()
@@ -247,6 +254,7 @@ export class AuthController {
   }
 
   @Post("change-password")
+  @Public("Authenticated user password change and session invalidation")
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(TenantContextInterceptor)
   @HttpCode(HttpStatus.OK)
@@ -268,6 +276,7 @@ export class AuthController {
   }
 
   @Get("me")
+  @Public("Authenticated user self profile retrieval")
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(TenantContextInterceptor)
   @ApiBearerAuth()
@@ -277,6 +286,7 @@ export class AuthController {
   }
 
   @Post("password-strength")
+  @Public("Password entropy and strength calculation tool")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Evaluate password strength and return feedback" })
   passwordStrength(@Body(new ZodValidationPipe(PasswordStrengthSchema)) dto: PasswordStrengthDto) {
@@ -284,6 +294,7 @@ export class AuthController {
   }
 
   @Post("first-login-password")
+  @Public("Forced first-login password update with pwd_change_pending scope")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Forced password change upon first login" })
   @ApiResponse({ status: 200, type: LoginResponseDto })
@@ -331,6 +342,7 @@ export class AuthController {
   }
 
   @Post("forgot-password")
+  @Public("Password reset initiation link request")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Request password reset email link" })
   @ApiResponse({ status: 200, type: GenericMessageResponseDto })
@@ -344,6 +356,7 @@ export class AuthController {
   }
 
   @Post("reset-password")
+  @Public("Password reset completion with compound token")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Reset password using single-use compound token" })
   @ApiResponse({ status: 200, type: GenericMessageResponseDto })
@@ -356,6 +369,7 @@ export class AuthController {
   }
 
   @Post("verify-email")
+  @Public("Email address verification with compound token")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Verify email using compound token" })
   @ApiResponse({ status: 200, type: GenericMessageResponseDto })
@@ -366,6 +380,7 @@ export class AuthController {
   }
 
   @Post("verify-email/resend")
+  @Public("Resend email verification link request")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Resend email verification link" })
   @ApiResponse({ status: 200, type: GenericMessageResponseDto })
@@ -378,6 +393,7 @@ export class AuthController {
   }
 
   @Post("2fa/setup")
+  @Public("Authenticated user two-factor setup initialization")
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -389,6 +405,7 @@ export class AuthController {
   }
 
   @Post("2fa/enable")
+  @Public("Authenticated user two-factor enablement with first verified code")
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -403,6 +420,7 @@ export class AuthController {
   }
 
   @Post("2fa/verify")
+  @Public("Two-factor authentication code challenge completion with 2fa_pending scope")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Complete login with 6-digit TOTP code and temporary token" })
   @ApiResponse({ status: 200, type: LoginResponseDto })
@@ -450,6 +468,7 @@ export class AuthController {
   }
 
   @Post("2fa/recovery")
+  @Public("Two-factor recovery code challenge completion with 2fa_pending scope")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Complete login using single-use recovery code and temporary token" })
   @ApiResponse({ status: 200, type: LoginResponseDto })
@@ -496,6 +515,7 @@ export class AuthController {
   }
 
   @Post("2fa/disable")
+  @Public("Authenticated user two-factor disablement")
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -509,6 +529,7 @@ export class AuthController {
   }
 
   @Post("2fa/recovery/regenerate")
+  @Public("Authenticated user recovery codes regeneration")
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -527,6 +548,7 @@ export class AuthController {
   }
 
   @Post("sms/send-otp")
+  @Public("SMS OTP challenge request stub")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Request one-time SMS verification code (stub)" })
   @ApiResponse({ status: 200, type: GenericMessageResponseDto })

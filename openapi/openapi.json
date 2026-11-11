@@ -852,6 +852,236 @@
           "Authentication & Sessions"
         ]
       }
+    },
+    "/api/v1/identity/permissions": {
+      "get": {
+        "operationId": "RoleController_listPermissions",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Permissions catalog"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List all global system permissions",
+        "tags": [
+          "Identity & Roles"
+        ]
+      }
+    },
+    "/api/v1/identity/roles": {
+      "get": {
+        "operationId": "RoleController_getRoles",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "List of roles"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List all roles for the current school tenant",
+        "tags": [
+          "Identity & Roles"
+        ]
+      },
+      "post": {
+        "operationId": "RoleController_createRole",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": "Role created"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Create a custom role with anti-escalation validation",
+        "tags": [
+          "Identity & Roles"
+        ]
+      }
+    },
+    "/api/v1/identity/roles/{id}": {
+      "get": {
+        "operationId": "RoleController_getRole",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Role details"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get role details with assigned permissions",
+        "tags": [
+          "Identity & Roles"
+        ]
+      },
+      "put": {
+        "operationId": "RoleController_updateRole",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Role updated"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Update a custom role",
+        "tags": [
+          "Identity & Roles"
+        ]
+      },
+      "delete": {
+        "operationId": "RoleController_deleteRole",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Role deleted"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Delete a custom role",
+        "tags": [
+          "Identity & Roles"
+        ]
+      }
+    },
+    "/api/v1/identity/roles/{id}/clone": {
+      "post": {
+        "operationId": "RoleController_cloneRole",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Role cloned"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Clone an existing role into a custom role",
+        "tags": [
+          "Identity & Roles"
+        ]
+      }
+    },
+    "/api/v1/identity/roles/assign": {
+      "post": {
+        "operationId": "RoleController_assignRole",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Role assigned"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Assign a role to a user",
+        "tags": [
+          "Identity & Roles"
+        ]
+      }
+    },
+    "/api/v1/identity/roles/unassign": {
+      "post": {
+        "operationId": "RoleController_unassignRole",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Role unassigned"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Unassign a role from a user",
+        "tags": [
+          "Identity & Roles"
+        ]
+      }
+    },
+    "/api/v1/identity/users/me/effective-permissions": {
+      "get": {
+        "operationId": "RoleController_getEffectivePermissionsForMe",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Effective permissions and role slugs"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get effective permissions and roles for current authenticated user",
+        "tags": [
+          "Identity & Roles"
+        ]
+      }
     }
   },
   "info": {
