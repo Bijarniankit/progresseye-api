@@ -567,6 +567,27 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
         where: { schoolId: schoolAId, roleId: principalRole!.id },
       });
       expect(remainingAdmins).toBeGreaterThanOrEqual(1);
+
+      // Restore principalA as an active administrator for subsequent test cases
+      await prisma.userRole.upsert({
+        where: {
+          schoolId_userId_roleId: {
+            schoolId: schoolAId,
+            userId: principalAId,
+            roleId: principalRole!.id,
+          },
+        },
+        update: {},
+        create: {
+          schoolId: schoolAId,
+          userId: principalAId,
+          roleId: principalRole!.id,
+        },
+      });
+      await redisService
+        .getClient()
+        ?.del(`auth:perm:${schoolAId}:${principalAId}`)
+        .catch(() => {});
     });
 
     it("Stale Token Defense: revoked role immediately blocks unexpired JWT on next request", async () => {
@@ -629,13 +650,14 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
       expect(initialReq.status).toBe(200);
 
       // 4. Admin revokes the role assignment (which purges Redis permission cache)
-      await request(app.getHttpServer())
+      const unassignRes = await request(app.getHttpServer())
         .post("/api/v1/identity/roles/unassign")
         .set("Authorization", `Bearer ${principalAToken}`)
         .send({
           userId: tempUserId,
           roleId: tempRole.id,
         });
+      expect(unassignRes.status).toBe(200);
 
       // 5. User immediately re-executes request with SAME valid token: must be rejected with 403 Forbidden!
       const subsequentReq = await request(app.getHttpServer())

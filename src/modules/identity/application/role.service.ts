@@ -482,7 +482,25 @@ export class RoleService {
         },
       });
 
-      return this.getRole(schoolId, roleId);
+      const updated = await tx.role.findFirst({
+        where: { id: roleId, schoolId, deletedAt: null },
+        include: {
+          rolePermissions: {
+            include: { permission: true },
+          },
+        },
+      });
+
+      return {
+        id: updated!.id,
+        name: updated!.name,
+        slug: updated!.slug,
+        description: updated!.description,
+        isSystem: updated!.isSystem,
+        permissions: updated!.rolePermissions.map((rp) => rp.permission.code),
+        createdAt: updated!.createdAt,
+        updatedAt: updated!.updatedAt,
+      };
     });
   }
 
