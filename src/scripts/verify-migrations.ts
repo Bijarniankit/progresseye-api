@@ -109,7 +109,7 @@ async function main() {
   `);
 
   await upgradePrisma.$executeRawUnsafe(`
-    INSERT INTO sessions (id, school_id, user_id, refresh_token_hash, family_id, expires_at, created_at, updated_at)
+    INSERT INTO sessions (id, school_id, user_id, token_hash, family_id, expires_at, created_at, updated_at)
     VALUES ('${sampleSessionId}'::uuid, '${sampleSchoolId}'::uuid, '${sampleUserId}'::uuid, 'seeded_refresh_hash', '${sampleFamilyId}'::uuid, CURRENT_TIMESTAMP + INTERVAL '7 days', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
   `);
 
@@ -153,7 +153,7 @@ async function main() {
   console.log("Verified pre-existing user preserved and is_two_factor_enabled defaulted to false.");
 
   const existingSession: any[] = await upgradePrisma.$queryRaw`
-    SELECT id, refresh_token_hash FROM sessions WHERE id = ${sampleSessionId}::uuid;
+    SELECT id, token_hash FROM sessions WHERE id = ${sampleSessionId}::uuid;
   `;
   if (existingSession.length !== 1) {
     throw new Error("Existing session not preserved after migration deploy!");

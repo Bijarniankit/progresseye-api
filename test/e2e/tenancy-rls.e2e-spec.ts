@@ -1123,7 +1123,7 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
       `);
 
       await mainPrisma.$executeRawUnsafe(`
-        INSERT INTO sessions (id, school_id, user_id, refresh_token_hash, family_id, expires_at, created_at, updated_at)
+        INSERT INTO sessions (id, school_id, user_id, token_hash, family_id, expires_at, created_at, updated_at)
         VALUES ('${sampleSessionId}'::uuid, '${sampleSchoolId}'::uuid, '${sampleUserId}'::uuid, 'seeded_refresh_hash', '${sampleFamilyId}'::uuid, CURRENT_TIMESTAMP + INTERVAL '7 days', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
       `);
 
@@ -1161,7 +1161,7 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
       expect(user[0].is_two_factor_enabled).toBe(false);
 
       const session: any[] = await mainPrisma.$queryRaw`
-        SELECT id, refresh_token_hash FROM sessions WHERE id = ${sampleSessionId}::uuid;
+        SELECT id, token_hash FROM sessions WHERE id = ${sampleSessionId}::uuid;
       `;
       expect(session.length).toBe(1);
 
