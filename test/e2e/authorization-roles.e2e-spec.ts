@@ -612,7 +612,17 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
       });
       expect(remainingAdmins).toBe(1);
 
-      // Restore principalA as an active administrator for subsequent test cases
+      // Clean up admin2 and restore principalA as the sole active administrator
+      await prisma.userRole.deleteMany({
+        where: { schoolId: schoolAId, userId: admin2Id },
+      });
+      await prisma.user.delete({
+        where: { id: admin2Id },
+      });
+      await prisma.user.update({
+        where: { id: principalAId },
+        data: { isActive: true },
+      });
       await prisma.userRole.upsert({
         where: {
           schoolId_userId_roleId: {
@@ -657,6 +667,23 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
       }
       if (!dbAvailable) return;
 
+      const principalRole = await prisma.role.findFirst({
+        where: { schoolId: schoolAId, slug: "principal" },
+      });
+
+      // Create a second user who holds customAdmin
+      const soleAdminUserId = uuidv7();
+      await prisma.user.create({
+        data: {
+          id: soleAdminUserId,
+          schoolId: schoolAId,
+          email: "soleadmin@alpha.com",
+          firstName: "Sole",
+          lastName: "Admin",
+          isActive: true,
+        },
+      });
+
       // Create a custom admin role
       const customAdmin = await prisma.role.create({
         data: {
@@ -684,15 +711,35 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
         });
       }
 
-      // Temporarily swap principalA's role to customAdmin
-      const principalRole = await prisma.role.findFirst({
-        where: { schoolId: schoolAId, slug: "principal" },
+      // Assign soleAdminUserId to customAdmin
+      await prisma.userRole.create({
+        data: { schoolId: schoolAId, userId: soleAdminUserId, roleId: customAdmin.id },
+      });
+
+      // Create editor role for principalA (has update permissions but NOT admin)
+      const editorRole = await prisma.role.create({
+        data: {
+          schoolId: schoolAId,
+          name: "Role Editor",
+          slug: "role-editor-" + uuidv7().substring(0, 8),
+          isSystem: false,
+        },
+      });
+      const editorPerms = await prisma.permission.findMany({
+        where: { code: { in: ["identity.role.read", "identity.role.update"] } },
+      });
+      for (const p of editorPerms) {
+        await prisma.rolePermission.create({
+          data: { schoolId: schoolAId, roleId: editorRole.id, permissionId: p.id },
+        });
+      }
+
+      // Swap principalA to editorRole
+      await prisma.userRole.deleteMany({
+        where: { schoolId: schoolAId, userId: principalAId },
       });
       await prisma.userRole.create({
-        data: { schoolId: schoolAId, userId: principalAId, roleId: customAdmin.id },
-      });
-      await prisma.userRole.deleteMany({
-        where: { schoolId: schoolAId, userId: principalAId, roleId: principalRole!.id },
+        data: { schoolId: schoolAId, userId: principalAId, roleId: editorRole.id },
       });
       await redisService.getClient()?.del(`auth:perm:${schoolAId}:${principalAId}`);
 
@@ -702,23 +749,27 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
         .set("Authorization", `Bearer ${principalAToken}`)
         .send({
           name: "Demoted Role",
-          permissionCodes: ["identity.role.read", "identity.role.update"],
+          permissionCodes: ["identity.role.read"],
         })
         .expect(400);
 
       expect(res.body.detail ?? res.body.message).toMatch(/CANNOT_REMOVE_LAST_ADMIN/);
 
-      // Restore principal role
+      // Restore principalA to principal role and clean up
+      await prisma.userRole.deleteMany({
+        where: { schoolId: schoolAId, userId: soleAdminUserId },
+      });
+      await prisma.user.delete({ where: { id: soleAdminUserId } });
+      await prisma.userRole.deleteMany({ where: { schoolId: schoolAId, userId: principalAId } });
       await prisma.userRole.create({
         data: { schoolId: schoolAId, userId: principalAId, roleId: principalRole!.id },
       });
-      await prisma.userRole.deleteMany({
-        where: { schoolId: schoolAId, userId: principalAId, roleId: customAdmin.id },
-      });
       await prisma.rolePermission.deleteMany({
-        where: { schoolId: schoolAId, roleId: customAdmin.id },
+        where: { schoolId: schoolAId, roleId: { in: [customAdmin.id, editorRole.id] } },
       });
-      await prisma.role.delete({ where: { id: customAdmin.id } });
+      await prisma.role.deleteMany({
+        where: { schoolId: schoolAId, id: { in: [customAdmin.id, editorRole.id] } },
+      });
       await redisService.getClient()?.del(`auth:perm:${schoolAId}:${principalAId}`);
     });
 
@@ -728,15 +779,89 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
       }
       if (!dbAvailable) return;
 
-      // When only 1 admin role exists (e.g. principal) and is system, cannot delete
       const principalRole = await prisma.role.findFirst({
         where: { schoolId: schoolAId, slug: "principal" },
       });
+
+      // Built-in system role deletion is rejected with 403 Forbidden
       const delSysRes = await request(app.getHttpServer())
         .delete(`/api/v1/identity/roles/${principalRole!.id}`)
         .set("Authorization", `Bearer ${principalAToken}`)
         .expect(403);
       expect(delSysRes.body.detail ?? delSysRes.body.message).toMatch(/Built-in system roles/);
+
+      // Create a custom admin role
+      const customAdmin = await prisma.role.create({
+        data: {
+          schoolId: schoolAId,
+          name: "Last Custom Admin",
+          slug: "last-custom-admin-" + uuidv7().substring(0, 8),
+          isSystem: false,
+        },
+      });
+      const perms = await prisma.permission.findMany({
+        where: {
+          code: {
+            in: [
+              "identity.role.assign",
+              "tenancy.school.update",
+              "identity.role.read",
+              "identity.role.delete",
+            ],
+          },
+        },
+      });
+      for (const p of perms) {
+        await prisma.rolePermission.create({
+          data: { schoolId: schoolAId, roleId: customAdmin.id, permissionId: p.id },
+        });
+      }
+
+      // Create a deleter role with delete permission but NOT admin
+      const deleterRole = await prisma.role.create({
+        data: {
+          schoolId: schoolAId,
+          name: "Role Deleter",
+          slug: "role-deleter-" + uuidv7().substring(0, 8),
+          isSystem: false,
+        },
+      });
+      const delPerms = await prisma.permission.findMany({
+        where: { code: { in: ["identity.role.read", "identity.role.delete"] } },
+      });
+      for (const p of delPerms) {
+        await prisma.rolePermission.create({
+          data: { schoolId: schoolAId, roleId: deleterRole.id, permissionId: p.id },
+        });
+      }
+
+      // Swap principalA to deleterRole (so no other admin exists in the school)
+      await prisma.userRole.deleteMany({ where: { schoolId: schoolAId, userId: principalAId } });
+      await prisma.userRole.create({
+        data: { schoolId: schoolAId, userId: principalAId, roleId: deleterRole.id },
+      });
+      await redisService.getClient()?.del(`auth:perm:${schoolAId}:${principalAId}`);
+
+      // Attempt to delete customAdmin: countOtherActiveAdmins is 0, so it fails with 400 CANNOT_REMOVE_LAST_ADMIN
+      const res = await request(app.getHttpServer())
+        .delete(`/api/v1/identity/roles/${customAdmin.id}`)
+        .set("Authorization", `Bearer ${principalAToken}`)
+        .expect(400);
+
+      expect(res.body.detail ?? res.body.message).toMatch(/CANNOT_REMOVE_LAST_ADMIN/);
+
+      // Restore principalA
+      await prisma.userRole.deleteMany({ where: { schoolId: schoolAId, userId: principalAId } });
+      await prisma.userRole.create({
+        data: { schoolId: schoolAId, userId: principalAId, roleId: principalRole!.id },
+      });
+      await prisma.rolePermission.deleteMany({
+        where: { schoolId: schoolAId, roleId: { in: [customAdmin.id, deleterRole.id] } },
+      });
+      await prisma.role.deleteMany({
+        where: { schoolId: schoolAId, id: { in: [customAdmin.id, deleterRole.id] } },
+      });
+      await redisService.getClient()?.del(`auth:perm:${schoolAId}:${principalAId}`);
     });
 
     it("Stale Token Defense: revoked role immediately blocks unexpired JWT on next request", async () => {
