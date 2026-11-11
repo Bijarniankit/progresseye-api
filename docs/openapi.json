@@ -1063,6 +1063,35 @@
         ]
       }
     },
+    "/api/v1/identity/users/{id}/deactivate": {
+      "post": {
+        "operationId": "RoleController_deactivateUser",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User deactivated"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Deactivate a user with last-admin lockout protection",
+        "tags": [
+          "Identity & Roles"
+        ]
+      }
+    },
     "/api/v1/identity/users/me/effective-permissions": {
       "get": {
         "operationId": "RoleController_getEffectivePermissionsForMe",
