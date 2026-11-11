@@ -13,6 +13,7 @@ export interface AuthenticatedUser {
   userId: string;
   schoolId: string;
   sessionId: string;
+  scope?: string;
 }
 
 @Injectable()
@@ -39,7 +40,7 @@ export class JwtAuthGuard implements CanActivate {
 
     const claims = await this.tokenService.verifyAccessToken(token);
 
-    if (claims.scope === "2fa_pending") {
+    if (claims.scope === "2fa_pending" || claims.scope === "platform_2fa_pending") {
       throw new ForbiddenException(
         "Two-factor authentication completion required before accessing this resource.",
       );
@@ -49,7 +50,14 @@ export class JwtAuthGuard implements CanActivate {
       throw new ForbiddenException("Password change required before accessing this resource.");
     }
 
-    if (claims.scope && claims.scope !== "access") {
+    if (claims.scope === "2fa_setup_pending") {
+      const url = request.url || "";
+      if (!url.includes("/2fa/setup") && !url.includes("/2fa/enable")) {
+        throw new ForbiddenException(
+          "Two-factor authentication setup required before accessing this resource.",
+        );
+      }
+    } else if (claims.scope && claims.scope !== "access" && claims.scope !== "platform") {
       throw new ForbiddenException("Invalid token scope for this resource.");
     }
 
@@ -61,6 +69,7 @@ export class JwtAuthGuard implements CanActivate {
       userId: claims.sub,
       schoolId: claims.schoolId,
       sessionId: claims.sessionId,
+      scope: claims.scope,
     };
 
     return true;

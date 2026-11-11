@@ -22,7 +22,8 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "ts-node prisma/seed.ts",
-    "openapi:generate": "ts-node src/scripts/generate-openapi.ts"
+    "openapi:generate": "ts-node src/scripts/generate-openapi.ts",
+    "platform:bootstrap": "ts-node scripts/bootstrap-platform-admin.ts"
   },
   "dependencies": {
     "@casl/ability": "6.7.5",

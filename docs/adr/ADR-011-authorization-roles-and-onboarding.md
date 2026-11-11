@@ -33,24 +33,26 @@ The application enforces strict PostgreSQL Row-Level Security (`progresseye_app`
     - E2E test: `Phase 13a: Authorization & Role Designer E2E Suite -> Attack & Security Verification -> Platform Permission Isolation: tenant admin cannot create role with platform.* permissions` (`test/e2e/authorization-roles.e2e-spec.ts`)
 
 ### 2. Built-in Roles & Idempotent Tenant Seeding
-- Exactly 13 built-in system roles are defined:
-  1. `platform_admin`: Superuser role for ProgressEye platform operators (`platform.*`).
-  2. `principal`: School executive with all tenant permissions (`tenancy.*`, `identity.*`, `academic.*`, `people.*`, `attendance.*`, `assessment.*`, `finance.*`, `communication.*`, `operations.*`, `documents.*`).
-  3. `teacher`: Academic, classroom, assigned section attendance, and subject grade management.
-  4. `student`: Self-only profile, attendance, grades, and fee receipts.
-  5. `parent`: Linked-children profile, attendance, grades, and fee payment.
-  6. `accountant`: Tuition fees, invoices, payments, financial ledger, and student directory lookup.
-  7. `librarian`: Book catalog, reservations, and circulation.
-  8. `receptionist`: Visitor logs, admissions intake, directory search.
-  9. `exam_coordinator`: Exam scheduling, assessment grading, and report card generation.
-  10. `transport_manager`: Vehicle fleets, transit routes, and student bus stops.
-  11. `hostel_warden`: Hostel rooms, dorm allocation, and residential attendance.
-  12. `nurse`: Student clinic visits, medical records, and allergy alerts.
-  13. `counselor`: Confidential counseling notes and student support sessions.
+- Roles are segregated strictly between Platform and Tenant:
+  - **System Platform Tenant** (`00000000-0000-0000-0000-000000000001` / `system-platform`): Exactly 1 built-in role (`platform_admin`).
+  - **Tenant Schools**: Exactly 12 built-in system roles (tenant roles cannot hold `platform.*` permissions):
+    1. `principal`: School executive with all 38 tenant permissions (`tenancy.*`, `identity.*`, `academic.*`, `people.*`, `attendance.*`, `assessment.*`, `finance.*`, `communication.*`, `operations.*`, `documents.*`).
+    2. `teacher`: Academic, classroom, assigned section attendance, and subject grade management.
+    3. `student`: Self-only profile, attendance, grades, and fee receipts.
+    4. `parent`: Linked-children profile, attendance, grades, and fee payment.
+    5. `accountant`: Tuition fees, invoices, payments, financial ledger, and student directory lookup.
+    6. `librarian`: Book catalog, reservations, and circulation.
+    7. `receptionist`: Visitor logs, admissions intake, directory search.
+    8. `exam_coordinator`: Exam scheduling, assessment grading, and report card generation.
+    9. `transport_manager`: Vehicle fleets, transit routes, and student bus stops.
+    10. `hostel_warden`: Hostel rooms, dorm allocation, and residential attendance (6 permissions).
+    11. `nurse`: Student clinic visits, medical records, and allergy alerts.
+    12. `counselor`: Confidential counseling notes and student support sessions.
 - **Tenant Seeding Routine**:
-  - Seeding the 13 built-in roles runs under the target school's tenant context (`SET LOCAL app.current_school_id = '<schoolId>'`).
+  - Seeding the 12 built-in roles runs under the target school's tenant context (`SELECT set_config('app.current_school_id', '<schoolId>', true)`).
   - Marked with `is_system = true` in the `roles` table. System roles cannot be renamed, deleted, or stripped of their core permissions.
   - Seeding is strictly idempotent: re-running the seed executes upserts on `(school_id, slug)` and updates `role_permissions` without duplicating rows or raising unique constraint errors.
+  - In migrations and scripts running as `progresseye_owner` under `FORCE ROW LEVEL SECURITY`, bare DML without tenant context affects 0 rows. Seeding and migration cleanups loop per school with `set_config` inside an isolated transaction.
 
 ### 3. CASL Ability Engine & Attribute Stubs
 - `@casl/ability` is pinned to exact version `6.7.5` in `package.json` (`"@casl/ability": "6.7.5"`) to resolve prototype pollution vulnerability GHSA-x9vf-53q3-cvx6 present in versions `<= 6.7.4`.
@@ -58,6 +60,7 @@ The application enforces strict PostgreSQL Row-Level Security (`progresseye_app`
 - An `AbilityFactory` compiles a user's effective permissions into an executable CASL `AppAbility`.
 - **Attribute Conditions**: Attribute-based constraints (such as `assignedSections` for teachers, `linkedChildren` for parents, and `self` for students) are evaluated synchronously in memory against authenticated request user context properties.
 - **Phase 15/16 Forward Compatibility**: In Phase 13, attribute conditions are defined as typed stubs that inspect user context metadata, avoiding premature SQL joins against tables that do not yet exist (e.g. `sections`, `guardians`).
+- **Student and Child Data Protection Rule**: Permissions that grant student/child data (`people.student.read`, `attendance.record.read`, `assessment.exam.read`, `finance.invoice.read`, `finance.payment.record`, `documents.record.read`) must NOT be wired to any route until the attribute conditions (teacher sections, parent children, student self) exist in Phases 15/16. Wiring them before attribute filtering is active would create cross-student or cross-child data exposure.
 
 ### 4. Route Coverage Guard & Decorators
 - Every endpoint in the API must declare an authorization policy:
@@ -113,27 +116,66 @@ The application enforces strict PostgreSQL Row-Level Security (`progresseye_app`
   - Platform administrators belong to a designated system tenant (`00000000-0000-0000-0000-000000000001` or dedicated system slug `system-platform`).
   - Platform authentication is a distinct endpoint (`POST /api/v1/platform/auth/login`) that strictly enforces mandatory TOTP 2FA before issuing a platform token (`scope: "platform"`).
 - **Provisioning without BYPASSRLS on `progresseye_app`**:
-  - In Phase 13b, tenant provisioning uses a narrow PostgreSQL `SECURITY DEFINER` function:
-    `platform_provision_school(p_slug, p_name, p_admin_email, ...)`
+  - In Phase 13b-1, tenant provisioning uses a narrow PostgreSQL `SECURITY DEFINER` function:
+    `platform_provision_school(p_slug, p_name, p_organization_id)`
   - Hardened with `SET search_path = public, pg_temp;`.
   - `REVOKE ALL ON FUNCTION platform_provision_school FROM PUBLIC;`
   - `GRANT EXECUTE ON FUNCTION platform_provision_school TO progresseye_app;`
-  - Input validation sanitizes slugs and emails. Gated at the application layer by `RequirePermission('platform.school.create')`.
-  - The function cannot read or modify any other tenant's data beyond creating the new tenant root and seeding its default system roles.
+  - Input validation sanitizes slugs and names. Checks against reserved system slugs (`'system-platform'`, `'platform'`, `'admin'`, `'api'`, `'app'`, `'public'`, `'system'`, `'root'`, `'support'`, `'billing'`).
+  - Writes an initial audit row inside the same database transaction.
+  - Gated at the application layer by `PlatformGuard` + `@RequirePermission('create', 'platform.school')`.
+  - **Risk Assessment**: `progresseye_app` has `EXECUTE` privilege on this function, meaning if SQL injection were present in the application, an attacker could provision schools. This risk is mitigated by parameterized queries, strict input validation, slug regex `^[a-z0-9]+(-[a-z0-9]+)*$`, and application-level role checks. The function cannot read or modify any other tenant's data beyond creating the new tenant root.
+- **Role Seeding and Cross-Tenant Execution (`withPlatformTenant`)**:
+  - Once `platform_provision_school` creates the school row, role seeding executes via `withPlatformTenant(targetSchoolId, actorUserId, action, op)`.
+  - `withPlatformTenant` sets `app.current_school_id = targetSchoolId`, executes the callback, inserts an append-only audit row into `platform_audit_logs`, and closes BACKLOG item 8 by being the sole authorized cross-tenant caller of `withTenant`.
+  - Reseeding and role repair is supported via `POST /api/v1/platform/schools/:id/reseed-roles`.
 - **Platform Audit Logs**:
-  - Table `platform_audit_logs` is created in Phase 13b (append-only, no `school_id`, no tenant RLS, owned by `progresseye_owner`, `GRANT SELECT, INSERT ON platform_audit_logs TO progresseye_app; REVOKE UPDATE, DELETE`).
+  - Table `platform_audit_logs` is created in Phase 13b-1:
+    - Global append-only sink (no `school_id` foreign key, no tenant RLS, owned by `progresseye_owner`).
+    - Grants: `GRANT INSERT ON platform_audit_logs TO progresseye_app; REVOKE SELECT, UPDATE, DELETE, TRUNCATE FROM progresseye_app; GRANT SELECT ON platform_audit_logs TO progresseye_ro, progresseye_owner;`.
+    - Because `progresseye_app` has `INSERT` only (no `SELECT`), the application uses raw SQL `$executeRaw` without `RETURNING`.
+    - Captures client IP HMAC-SHA256 hash using `AUTH_LOG_HMAC_SECRET`.
+    - Payload captures IDs and non-sensitive field names only; sensitive values are redacted.
+- **Bootstrap Routine**:
+  - CLI script `scripts/bootstrap-platform-admin.ts` provides a secure initialization path.
+  - Requires `PLATFORM_BOOTSTRAP_SECRET` (minimum 32 chars).
+  - Blocked in production unless `ENABLE_PLATFORM_BOOTSTRAP=true`.
+  - Refuses to run if any platform admin already exists.
+  - Generates a random one-time password displayed once.
+  - Mandates 2FA setup on first login (`isTwoFactorEnabled: false` with forced `platform_2fa_setup_pending`).
 - **Cloud Environment Nuances**:
   - Behavior under managed connection poolers (AWS RDS Proxy, Supabase PgBouncer in transaction mode) with PostgreSQL RLS is marked **UNVERIFIED** and will be verified on staging infrastructure.
 
-### 9. Principal 2FA Enforcement & Onboarding Flow (Phase 13b)
-- Onboarding invite tokens are compound strings: `<schoolId>.<random32ByteHex>`, hashed at rest with SHA-256 (`code_hash`).
-- Redeeming an invite sets `used_at = CURRENT_TIMESTAMP(3)` and creates the principal user account with `is_two_factor_enabled = false`.
-- The access token issued on join carries `scope: "2fa_setup_pending"`.
-- `JwtAuthGuard` restricts `2fa_setup_pending` tokens strictly to `POST /api/v1/auth/2fa/setup` and `POST /api/v1/auth/2fa/enable`. All other API routes reject the request with `403 Forbidden` (`2FA_SETUP_REQUIRED`).
+### 9. Guard-Level 2FA Enforcement & Principal Onboarding Flow
+- **Guard-Level 2FA Enforcement Rule (Phase 13b-2)**:
+  - Role-based 2FA enforcement: Any user holding a role with sensitive permissions (`platform.*`, `identity.role.assign`, `finance.*`) is mandated to use 2FA. This covers `platform_admin`, `principal`, and `accountant`.
+  - Guard check runs before the `@Authenticated` early return, with an explicit exemption list (2FA setup and enable endpoints).
+  - The `requires_2fa` requirement is derived from the fixed sensitive-permission list, is not copied on role clone, and cannot be edited down on custom roles.
+  - Real 2FA fixtures in e2e tests; no test-only bypass flag is permitted.
+- **Principal Onboarding Flow**:
+  - Onboarding invite tokens are compound strings: `<schoolId>.<random32ByteHex>`, hashed at rest with SHA-256 (`code_hash`).
+  - Redeeming an invite sets `used_at = CURRENT_TIMESTAMP(3)` and creates the principal user account with `is_two_factor_enabled = false`.
+  - The access token issued on join carries `scope: "2fa_setup_pending"`.
+  - `JwtAuthGuard` restricts `2fa_setup_pending` tokens strictly to `POST /api/v1/auth/2fa/setup` and `POST /api/v1/auth/2fa/enable`. All other API routes reject the request with `403 Forbidden` (`2FA_SETUP_REQUIRED`).
+  - Calling `enable2Fa` with `2fa_setup_pending` scope activates 2FA and immediately issues a full access session (access token + refresh cookie), eliminating the need for a separate login step.
 
-### 10. Audit Logging for Role Changes
-- Any role creation, role update, role deletion, or role assignment explicitly logs a structured tenant audit record into `audit_logs`:
-  - `action`: `ROLE_CREATE`, `ROLE_UPDATE`, `ROLE_DELETE`, `ROLE_ASSIGN`, `ROLE_UNASSIGN`.
-  - `resource`: `roles` or `user_roles`.
-  - `payload`: Records role metadata, changed permissions diff, target user ID, and actor ID.
-  - Sensitive credentials (passwords, tokens, keys) are redacted.
+### 10. AuditInterceptor Contract (Phase 13b-2)
+- An `AuditInterceptor` captures all mutating requests (`POST`, `PUT`, `PATCH`, `DELETE`).
+- Captures: actor user ID, tenant school ID, target entity, request ID, and a before/after diff of modified fields.
+- Field values are sanitized using an allow-list; sensitive fields and personal identifiable information (PII) are logged as `"changed"` only without logging raw values.
+- Critical and platform operations fail immediately if audit logging fails (fail-closed).
+- Audit log retention policy follows `TODO-REAL-DATA`.
+
+### 11. Conscious Architectural Deviations
+1. **System Tenant + `SECURITY DEFINER` vs Phase 11's Separate Platform Policies**:
+   - In Phase 11, the design contemplated adding separate platform-level RLS policies on each table.
+   - *Deviation*: Phase 13 adopts a dedicated system tenant (`00000000-0000-0000-0000-000000000001` / `system-platform`) combined with a narrow PostgreSQL `SECURITY DEFINER` function (`platform_provision_school`).
+   - *Rationale*: Eliminates complex multi-branch RLS policies that could degrade query performance across millions of tenant rows, prevents accidental bypass bugs, and cleanly bounds cross-tenant provisioning inside a single vetted database function.
+2. **Principal Sets Password at Join**:
+   - Rather than sending a temporary password and forcing a password change on first login, the onboarding invite redemption endpoint allows the invited principal to set their initial strong password directly.
+   - *Rationale*: Cryptographically equivalent to first-login password change, reduces email exposure of credentials, and simplifies the user onboarding experience while enforcing mandatory 2FA enrollment.
+3. **Attribute-Based Rules Deferred to Phases 15/16**:
+   - Fine-grained attribute rules (teacher section assignment, parent child linking) are deferred until the corresponding domain tables (`sections`, `guardians`) are provisioned in Phases 15 and 16.
+   - *Guard*: Permissions accessing student/child data are prohibited from being wired to open routes until these attribute constraints exist.
+4. **Subscription Plan Stub**:
+   - A full subscription billing catalog is deferred to the billing and payments phase. In Phase 13, subscription plans are stubbed or managed via feature flags without a dedicated billing engine.

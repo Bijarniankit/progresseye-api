@@ -57,10 +57,68 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   ): Promise<T> {
     if (this.tenantContext) {
       this.tenantContext.validateTenantId(schoolId);
+      const activeTenantId = this.tenantContext.getTenantId();
+      if (
+        activeTenantId &&
+        activeTenantId !== schoolId &&
+        activeTenantId !== "00000000-0000-0000-0000-000000000001"
+      ) {
+        throw new Error(
+          `Cross-tenant execution forbidden: active request tenant ${activeTenantId} does not match target tenant ${schoolId}. Platform operations must use withPlatformTenant.`,
+        );
+      }
     }
     return this.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT set_config('app.current_school_id', ${schoolId}, true)`;
       return fn(tx);
+    });
+  }
+
+  /**
+   * Cross-tenant execution wrapper exclusively for platform operations.
+   * Enforces that the actor is performing a declared platform action,
+   * sets the target tenant context, executes the callback within a transaction,
+   * and writes a platform audit log entry.
+   * Closes BACKLOG item 8 for platform use.
+   */
+  async withPlatformTenant<T>(
+    targetSchoolId: string,
+    actorUserId: string,
+    action: string,
+    op: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    if (this.tenantContext) {
+      this.tenantContext.validateTenantId(targetSchoolId);
+    }
+    return this.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.current_school_id', ${targetSchoolId}, true)`;
+      const result = await op(tx);
+
+      // Write platform audit log entry (platform_audit_logs is append-only, progresseye_app has INSERT only)
+      await tx.$executeRaw`
+        INSERT INTO "platform_audit_logs" (
+          "id",
+          "actor_user_id",
+          "action",
+          "resource",
+          "resource_id",
+          "payload",
+          "client_ip_hash",
+          "user_agent",
+          "created_at"
+        ) VALUES (
+          gen_random_uuid(),
+          ${actorUserId}::uuid,
+          ${action},
+          'school',
+          ${targetSchoolId},
+          ${JSON.stringify({ action, targetSchoolId, actorUserId })}::jsonb,
+          NULL,
+          'platform-internal',
+          CURRENT_TIMESTAMP(3)
+        )
+      `;
+      return result;
     });
   }
 

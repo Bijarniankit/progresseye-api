@@ -39,6 +39,7 @@ import { SessionRepository } from "./infra/session.repository";
   ],
   exports: [
     AuthService,
+    SessionRepository,
     TokenService,
     TotpService,
     PasswordService,

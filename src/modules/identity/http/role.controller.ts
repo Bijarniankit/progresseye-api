@@ -13,6 +13,7 @@ import {
 } from "@nestjs/common";
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from "@nestjs/swagger";
 import type { FastifyRequest } from "fastify";
+import { Authenticated } from "../../../common/decorators/authenticated.decorator";
 import { RequirePermission } from "../../../common/decorators/require-permission.decorator";
 import { PoliciesGuard } from "../../../common/guards/policies.guard";
 import { ZodValidationPipe } from "../../../common/pipes/zod-validation.pipe";
@@ -149,7 +150,7 @@ export class RoleController {
   }
 
   @Get("users/me/effective-permissions")
-  @RequirePermission("read", "identity.role")
+  @Authenticated("Returns effective permissions and role slugs for current authenticated user")
   @ApiOperation({ summary: "Get effective permissions and roles for current authenticated user" })
   @ApiResponse({ status: 200, description: "Effective permissions and role slugs" })
   async getEffectivePermissionsForMe(@Req() req: AuthenticatedRequest) {

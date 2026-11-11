@@ -31,6 +31,11 @@ export const PERMISSIONS_CATALOG: PermissionDefinition[] = [
     module: "platform",
     description: "Manage subscription plans and platform feature toggles",
   },
+  {
+    code: "platform.invite.create",
+    module: "platform",
+    description: "Create and dispatch principal onboarding invites for tenant schools",
+  },
 
   // --- Tenancy Module ---
   {
@@ -104,11 +109,6 @@ export const PERMISSIONS_CATALOG: PermissionDefinition[] = [
     code: "identity.audit.read",
     module: "identity",
     description: "Inspect tenant audit logs",
-  },
-  {
-    code: "identity.auth.manage",
-    module: "identity",
-    description: "Manage user authentication settings and 2FA",
   },
 
   // --- Academic Module ---
@@ -265,7 +265,7 @@ export interface BuiltInRoleDefinition {
   permissions: string[];
 }
 
-export const BUILT_IN_ROLES: BuiltInRoleDefinition[] = [
+export const SYSTEM_PLATFORM_ROLES: BuiltInRoleDefinition[] = [
   {
     slug: "platform_admin",
     name: "Platform Administrator",
@@ -275,8 +275,12 @@ export const BUILT_IN_ROLES: BuiltInRoleDefinition[] = [
       "platform.school.read",
       "platform.school.update",
       "platform.plan.manage",
+      "platform.invite.create",
     ],
   },
+];
+
+export const TENANT_BUILT_IN_ROLES: BuiltInRoleDefinition[] = [
   {
     slug: "principal",
     name: "Principal",
@@ -296,7 +300,6 @@ export const BUILT_IN_ROLES: BuiltInRoleDefinition[] = [
       "identity.role.delete",
       "identity.role.assign",
       "identity.audit.read",
-      "identity.auth.manage",
       "academic.year.manage",
       "academic.class.read",
       "academic.class.write",
@@ -460,4 +463,9 @@ export const BUILT_IN_ROLES: BuiltInRoleDefinition[] = [
       "Student wellbeing counselor with access to confidential counseling and observation notes",
     permissions: ["people.student.read", "people.staff.read", "communication.notice.read"],
   },
+];
+
+export const BUILT_IN_ROLES: BuiltInRoleDefinition[] = [
+  ...SYSTEM_PLATFORM_ROLES,
+  ...TENANT_BUILT_IN_ROLES,
 ];

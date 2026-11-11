@@ -825,8 +825,19 @@ export class AuthService {
   /**
    * Verifies the initial TOTP code to confirm the authenticator app and enables 2FA.
    * Generates 8 single-use recovery codes and returns them once to the user.
+   * If invoked during 2fa_setup_pending flow, issues a full authenticated session.
    */
-  async enable2Fa(schoolId: string, userId: string, code: string) {
+  async enable2Fa(
+    schoolId: string,
+    userId: string,
+    code: string,
+    meta?: {
+      clientIp: string;
+      userAgent?: string;
+      isMobile: boolean;
+      isSetupPending?: boolean;
+    },
+  ) {
     this.tenantContext.validateTenantId(schoolId);
     const secretRecord = await this.sessionRepository.findTwoFactorSecret(schoolId, userId);
     if (!secretRecord) {
@@ -861,6 +872,53 @@ export class AuthService {
       schoolId,
       userId,
     });
+
+    if (meta?.isSetupPending) {
+      const user = await this.sessionRepository.findUserById(schoolId, userId);
+      if (user && user.isActive) {
+        const rawRefreshToken = this.tokenService.generateRefreshToken();
+        const tokenHash = this.tokenService.hashToken(rawRefreshToken);
+        const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+        const session = await this.sessionRepository.createSession({
+          schoolId,
+          userId: user.id,
+          tokenHash,
+          clientType: meta.isMobile ? "mobile" : "web",
+          userAgent: meta.userAgent,
+          ipAddress: meta.clientIp,
+          expiresAt,
+        });
+
+        const { token: accessToken, expiresIn } = await this.tokenService.createAccessToken({
+          userId: user.id,
+          schoolId,
+          sessionId: session.id,
+        });
+
+        const compoundRefreshToken = this.tokenService.buildCompoundRefreshToken(
+          schoolId,
+          rawRefreshToken,
+        );
+
+        return {
+          recoveryCodes: plainCodes,
+          accessToken,
+          expiresIn,
+          tokenType: "Bearer",
+          compoundRefreshToken,
+          refreshToken: meta.isMobile ? compoundRefreshToken : undefined,
+          user: {
+            id: user.id,
+            email: user.email,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            roles: user.userRoles.map((ur) => ur.role.name),
+            isTwoFactorEnabled: true,
+          },
+        };
+      }
+    }
 
     return { recoveryCodes: plainCodes };
   }

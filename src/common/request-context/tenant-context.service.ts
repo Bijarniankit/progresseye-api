@@ -7,7 +7,8 @@ export interface TenantContext {
   requestId?: string;
 }
 
-const NIL_UUID = "00000000-0000-0000-0000-000000000000";
+export const NIL_UUID = "00000000-0000-0000-0000-000000000000";
+export const SYSTEM_TENANT_ID = "00000000-0000-0000-0000-000000000001";
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 @Injectable()
@@ -15,7 +16,8 @@ export class TenantContextService {
   private readonly storage = new AsyncLocalStorage<TenantContext>();
 
   /**
-   * Validate that a given string is a valid non-nil RFC 4122/UUIDv7 UUID.
+   * Validate that a given string is a valid non-nil RFC 4122/UUIDv7 UUID,
+   * or the designated SYSTEM_TENANT_ID.
    */
   validateTenantId(schoolId: string): void {
     if (!schoolId || typeof schoolId !== "string") {
@@ -24,6 +26,9 @@ export class TenantContextService {
     const trimmed = schoolId.trim();
     if (trimmed === NIL_UUID) {
       throw new BadRequestException("Nil-UUID is not a valid tenant ID");
+    }
+    if (trimmed === SYSTEM_TENANT_ID) {
+      return;
     }
     if (!UUID_REGEX.test(trimmed)) {
       throw new BadRequestException("Malformed tenant ID: must be a valid UUID");

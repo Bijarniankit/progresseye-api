@@ -226,7 +226,7 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
       expect(res.body.some((p: any) => p.code === "identity.role.create")).toBe(true);
     });
 
-    it("GET /api/v1/identity/roles: lists all 13 built-in roles for the school", async () => {
+    it("GET /api/v1/identity/roles: lists all 12 built-in roles for the school", async () => {
       if (!dbAvailable) return;
 
       const res = await request(app.getHttpServer())
@@ -235,8 +235,9 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
 
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body)).toBe(true);
-      expect(res.body.length).toBeGreaterThanOrEqual(13);
+      expect(res.body.length).toBe(12);
       expect(res.body.some((r: any) => r.slug === "principal" && r.isSystem === true)).toBe(true);
+      expect(res.body.some((r: any) => r.slug === "platform_admin")).toBe(false);
     });
 
     it("Idempotent Built-in Role Seeding: re-seeding built-in roles under real tenant context is idempotent", async () => {
@@ -245,7 +246,7 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
       const rolesBefore = await prisma.role.count({
         where: { schoolId: schoolAId, isSystem: true },
       });
-      expect(rolesBefore).toBe(13);
+      expect(rolesBefore).toBe(12);
 
       // Re-seed built-in roles for school A a second time
       await roleService.seedBuiltInRolesForSchool(schoolAId);
@@ -253,7 +254,7 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
       const rolesAfterSecondSeed = await prisma.role.count({
         where: { schoolId: schoolAId, isSystem: true },
       });
-      expect(rolesAfterSecondSeed).toBe(13);
+      expect(rolesAfterSecondSeed).toBe(12);
 
       // Re-seed a third time to strictly guarantee repeatability
       await roleService.seedBuiltInRolesForSchool(schoolAId);
@@ -261,14 +262,14 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
       const rolesAfterThirdSeed = await prisma.role.count({
         where: { schoolId: schoolAId, isSystem: true },
       });
-      expect(rolesAfterThirdSeed).toBe(13);
+      expect(rolesAfterThirdSeed).toBe(12);
 
-      // Verify all 13 built-in role slugs exist and have assigned permissions
+      // Verify all 12 built-in role slugs exist and have assigned permissions
       const seededRoles = await prisma.role.findMany({
         where: { schoolId: schoolAId, isSystem: true },
         include: { rolePermissions: true },
       });
-      expect(seededRoles).toHaveLength(13);
+      expect(seededRoles).toHaveLength(12);
       for (const r of seededRoles) {
         expect(r.rolePermissions.length).toBeGreaterThan(0);
       }
@@ -388,6 +389,44 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body.permissions)).toBe(true);
       expect(res.body.roles).toContain("principal");
+    });
+
+    it("GET /api/v1/identity/users/me/effective-permissions: accessible to student without role-management permissions (@Authenticated)", async () => {
+      if (!dbAvailable) return;
+
+      // Assign student role to studentA
+      const studentRole = await prisma.role.findFirst({
+        where: { schoolId: schoolAId, slug: "student" },
+      });
+      if (studentRole) {
+        await prisma.userRole.create({
+          data: { schoolId: schoolAId, userId: studentAId, roleId: studentRole.id },
+        });
+      }
+
+      const studentSession = await prisma.session.create({
+        data: {
+          schoolId: schoolAId,
+          userId: studentAId,
+          tokenHash: "student-sess-hash",
+          clientType: "web",
+          expiresAt: new Date(Date.now() + 3600000),
+        },
+      });
+
+      const { token: studentToken } = await tokenService.createAccessToken({
+        userId: studentAId,
+        schoolId: schoolAId,
+        sessionId: studentSession.id,
+      });
+
+      const res = await request(app.getHttpServer())
+        .get("/api/v1/identity/users/me/effective-permissions")
+        .set("Authorization", `Bearer ${studentToken}`);
+
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body.permissions)).toBe(true);
+      expect(res.body.roles).toContain("student");
     });
   });
 

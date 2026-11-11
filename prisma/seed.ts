@@ -1,8 +1,9 @@
 import { PrismaClient } from "@prisma/client";
 import { uuidv7 } from "uuidv7";
 import {
-  BUILT_IN_ROLES,
   PERMISSIONS_CATALOG,
+  SYSTEM_PLATFORM_ROLES,
+  TENANT_BUILT_IN_ROLES,
 } from "../src/modules/identity/domain/permissions.catalog";
 
 const prisma = new PrismaClient();
@@ -28,7 +29,62 @@ async function main() {
   }
   console.log(`Global permissions seeded: ${PERMISSIONS_CATALOG.length} permissions.`);
 
-  // 2. Demo School Root
+  // 2. System Platform Tenant Root (00000000-0000-0000-0000-000000000001)
+  const systemTenantId = "00000000-0000-0000-0000-000000000001";
+  await prisma.school.upsert({
+    where: { id: systemTenantId },
+    update: {},
+    create: {
+      id: systemTenantId,
+      name: "ProgressEye Platform Engine",
+      slug: "system-platform",
+      isActive: true,
+    },
+  });
+  console.log("System platform tenant root verified.");
+
+  const allPermissions = await prisma.permission.findMany();
+  const permMap = new Map(allPermissions.map((p) => [p.code, p.id]));
+
+  // Seed system platform role in system tenant
+  for (const builtIn of SYSTEM_PLATFORM_ROLES) {
+    let role = await prisma.role.findFirst({
+      where: { schoolId: systemTenantId, slug: builtIn.slug },
+    });
+    if (!role) {
+      role = await prisma.role.create({
+        data: {
+          schoolId: systemTenantId,
+          name: builtIn.name,
+          slug: builtIn.slug,
+          description: builtIn.description,
+          isSystem: true,
+        },
+      });
+    }
+    for (const code of builtIn.permissions) {
+      const permId = permMap.get(code);
+      if (permId) {
+        await prisma.rolePermission.upsert({
+          where: {
+            schoolId_roleId_permissionId: {
+              schoolId: systemTenantId,
+              roleId: role.id,
+              permissionId: permId,
+            },
+          },
+          update: {},
+          create: {
+            schoolId: systemTenantId,
+            roleId: role.id,
+            permissionId: permId,
+          },
+        });
+      }
+    }
+  }
+
+  // 3. Demo School Root
   const schoolId = uuidv7();
   const school = await prisma.school.upsert({
     where: { id: schoolId },
@@ -42,7 +98,7 @@ async function main() {
   });
   console.log(`Created/Verified Demo School: ${school.name} (${school.id})`);
 
-  // 3. Demo Academic Year
+  // 4. Demo Academic Year
   const yearId = uuidv7();
   const academicYear = await prisma.academicYear.create({
     data: {
@@ -56,13 +112,10 @@ async function main() {
   });
   console.log(`Created Academic Year: ${academicYear.name} (${academicYear.id})`);
 
-  // 4. Seed 13 Built-in Roles for the Demo School
-  console.log(`Seeding 13 built-in roles for school: ${school.name}...`);
-  const allPermissions = await prisma.permission.findMany();
-  const permMap = new Map(allPermissions.map((p) => [p.code, p.id]));
-
+  // 5. Seed 12 Built-in Tenant Roles for the Demo School
+  console.log(`Seeding 12 built-in tenant roles for school: ${school.name}...`);
   let principalRoleId = "";
-  for (const builtIn of BUILT_IN_ROLES) {
+  for (const builtIn of TENANT_BUILT_IN_ROLES) {
     let role = await prisma.role.findFirst({
       where: { schoolId: school.id, slug: builtIn.slug },
     });
