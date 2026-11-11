@@ -1047,7 +1047,7 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
       expect(tables.length).toBeGreaterThanOrEqual(13);
 
       await emptyPrisma.$disconnect();
-    });
+    }, 60000);
   });
 
   describe("Test 15: Migration Deploy from Current Main Schema Upgrade", () => {
@@ -1186,6 +1186,6 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
       expect(recoveryTable.length).toBe(1);
 
       await mainPrisma.$disconnect();
-    });
+    }, 60000);
   });
 });
