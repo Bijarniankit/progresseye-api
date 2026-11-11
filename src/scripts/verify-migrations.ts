@@ -1,4 +1,7 @@
 import { execSync } from "node:child_process";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { PrismaClient } from "@prisma/client";
 
 async function main() {
@@ -47,70 +50,7 @@ async function main() {
   });
   await upgradePrisma.$connect();
 
-  // Apply main migrations 1, 2, 3
-  const statementsM1 = [
-    `CREATE EXTENSION IF NOT EXISTS "pgcrypto";`,
-    `CREATE EXTENSION IF NOT EXISTS "pg_trgm";`,
-    `CREATE EXTENSION IF NOT EXISTS "btree_gist";`,
-    `CREATE EXTENSION IF NOT EXISTS "citext";`,
-    `CREATE TABLE IF NOT EXISTS "schools" (
-        "id" UUID NOT NULL DEFAULT gen_random_uuid(),
-        "slug" TEXT NOT NULL,
-        "name" TEXT NOT NULL,
-        "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        CONSTRAINT "schools_pkey" PRIMARY KEY ("id")
-    );`,
-    `CREATE UNIQUE INDEX IF NOT EXISTS "schools_slug_key" ON "schools"("slug");`,
-  ];
-  for (const stmt of statementsM1) {
-    await upgradePrisma.$executeRawUnsafe(stmt);
-  }
-
-  const statementsM2 = [
-    `CREATE TYPE "lead_types" AS ENUM ('CONTACT', 'DEMO', 'NEWSLETTER');`,
-    `CREATE TYPE "lead_statuses" AS ENUM ('NEW', 'CONTACTED', 'ARCHIVED');`,
-    `CREATE TABLE IF NOT EXISTS "public_leads" (
-        "id" UUID NOT NULL DEFAULT gen_random_uuid(),
-        "type" "lead_types" NOT NULL,
-        "name" TEXT,
-        "email" citext NOT NULL,
-        "school_name" TEXT,
-        "message" TEXT,
-        "status" "lead_statuses" NOT NULL DEFAULT 'NEW',
-        "consent_text" TEXT NOT NULL,
-        "consented_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        "ip_address_hash" TEXT,
-        "user_agent" TEXT,
-        "idempotency_key" TEXT,
-        "retention_until" TIMESTAMP(3),
-        "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        CONSTRAINT "public_leads_pkey" PRIMARY KEY ("id")
-    );`,
-    `CREATE UNIQUE INDEX IF NOT EXISTS "public_leads_idempotency_key_key" ON "public_leads"("idempotency_key");`,
-    `CREATE INDEX IF NOT EXISTS "public_leads_type_created_at_idx" ON "public_leads"("type", "created_at");`,
-    `CREATE INDEX IF NOT EXISTS "public_leads_email_idx" ON "public_leads"("email");`,
-    `CREATE INDEX IF NOT EXISTS "public_leads_status_idx" ON "public_leads"("status");`,
-  ];
-  for (const stmt of statementsM2) {
-    await upgradePrisma.$executeRawUnsafe(stmt);
-  }
-
-  const statementsM3 = [
-    `ALTER TABLE "public_leads" ADD COLUMN IF NOT EXISTS "notified_at" TIMESTAMP(3);`,
-  ];
-  for (const stmt of statementsM3) {
-    await upgradePrisma.$executeRawUnsafe(stmt);
-  }
-
-  // Insert existing data on main
-  await upgradePrisma.$executeRawUnsafe(`
-    INSERT INTO schools (id, slug, name, updated_at) VALUES ('018f0000-0000-7000-8000-000000000001'::uuid, 'main-school', 'Main School', CURRENT_TIMESTAMP);
-  `);
-  console.log("Main schema created and sample data seeded.");
-
-  // Record main migrations in _prisma_migrations
+  // Create _prisma_migrations table
   await upgradePrisma.$executeRawUnsafe(`
     CREATE TABLE IF NOT EXISTS "_prisma_migrations" (
       "id" VARCHAR(36) PRIMARY KEY,
@@ -123,13 +63,56 @@ async function main() {
       "applied_steps_count" INTEGER NOT NULL DEFAULT 0
     );
   `);
+
+  const baselineMigrations = [
+    "20261012000000_enable_postgresql_extensions",
+    "20261024000000_create_public_leads",
+    "20261024010000_add_notified_at_to_leads",
+    "20261102000000_tenancy_and_row_level_security",
+    "20261108000000_auth_and_session_foundation",
+    "20261109000000_account_lifecycle_and_reset_tokens",
+  ];
+
+  const migrationsDir = path.resolve(__dirname, "../../prisma/migrations");
+
+  for (const mig of baselineMigrations) {
+    const migFile = path.join(migrationsDir, mig, "migration.sql");
+    const sql = fs.readFileSync(migFile, "utf8");
+    await upgradePrisma.$executeRawUnsafe(sql);
+
+    const checksum = crypto.createHash("sha256").update(fs.readFileSync(migFile)).digest("hex");
+    const migId = crypto.randomUUID();
+    await upgradePrisma.$executeRawUnsafe(`
+      INSERT INTO "_prisma_migrations" ("id", "checksum", "finished_at", "migration_name", "applied_steps_count")
+      VALUES ('${migId}', '${checksum}', now(), '${mig}', 1);
+    `);
+  }
+
+  // Seed sample tenant data across baseline tables
+  const sampleSchoolId = "018f0000-0000-7000-8000-000000000001";
+  const sampleUserId = "018f0000-0000-7000-8000-000000000002";
+  const sampleSessionId = "018f0000-0000-7000-8000-000000000003";
+  const sampleFamilyId = "018f0000-0000-7000-8000-000000000004";
+  const sampleResetTokenId = "018f0000-0000-7000-8000-000000000005";
+  const sampleVerifyTokenId = "018f0000-0000-7000-8000-000000000006";
+
   await upgradePrisma.$executeRawUnsafe(`
-    INSERT INTO "_prisma_migrations" (id, checksum, finished_at, migration_name, applied_steps_count)
-    VALUES 
-      ('1', 'c1', now(), '20261012000000_enable_postgresql_extensions', 1),
-      ('2', 'c2', now(), '20261024000000_create_public_leads', 1),
-      ('3', 'c3', now(), '20261024010000_add_notified_at_to_leads', 1);
+    INSERT INTO schools (id, slug, name, updated_at)
+    VALUES ('${sampleSchoolId}'::uuid, 'main-school', 'Main School', CURRENT_TIMESTAMP);
+
+    INSERT INTO users (id, school_id, email, first_name, last_name, password_hash, email_verified_at, updated_at)
+    VALUES ('${sampleUserId}'::uuid, '${sampleSchoolId}'::uuid, 'main-user@example.com', 'Main', 'User', 'seeded_hash', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+
+    INSERT INTO sessions (id, school_id, user_id, refresh_token_hash, family_id, expires_at, created_at, updated_at)
+    VALUES ('${sampleSessionId}'::uuid, '${sampleSchoolId}'::uuid, '${sampleUserId}'::uuid, 'seeded_refresh_hash', '${sampleFamilyId}'::uuid, CURRENT_TIMESTAMP + INTERVAL '7 days', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+
+    INSERT INTO password_reset_tokens (id, school_id, user_id, token_hash, expires_at, created_at)
+    VALUES ('${sampleResetTokenId}'::uuid, '${sampleSchoolId}'::uuid, '${sampleUserId}'::uuid, 'seeded_reset_hash', CURRENT_TIMESTAMP + INTERVAL '1 hour', CURRENT_TIMESTAMP);
+
+    INSERT INTO email_verification_tokens (id, school_id, user_id, token_hash, expires_at, created_at)
+    VALUES ('${sampleVerifyTokenId}'::uuid, '${sampleSchoolId}'::uuid, '${sampleUserId}'::uuid, 'seeded_verify_hash', CURRENT_TIMESTAMP + INTERVAL '24 hours', CURRENT_TIMESTAMP);
   `);
+  console.log("Real main schema (migrations 1-6) applied and sample tenant data seeded.");
 
   console.log("Running prisma migrate deploy on upgraded database...");
   const upgradeDeployOutput = execSync("pnpm prisma migrate deploy", {
@@ -148,39 +131,39 @@ async function main() {
   if (existingSchool.length !== 1) {
     throw new Error("Existing school not preserved after migration deploy!");
   }
-  console.log("Verified pre-existing data preserved after Phase 11 upgrade.");
+  console.log("Verified pre-existing school preserved after upgrade.");
 
-  const sessionCols: any[] = await upgradePrisma.$queryRaw`
-    SELECT column_name FROM information_schema.columns 
-    WHERE table_name = 'sessions' AND column_name = 'family_id';
+  const existingUser: any[] = await upgradePrisma.$queryRaw`
+    SELECT id, email, is_two_factor_enabled FROM users WHERE id = ${sampleUserId}::uuid;
   `;
-  if (sessionCols.length !== 1) {
-    throw new Error("Phase 12a family_id column not found on sessions table!");
+  if (existingUser.length !== 1 || existingUser[0].is_two_factor_enabled !== false) {
+    throw new Error("Existing user not preserved or is_two_factor_enabled default failed!");
   }
-  console.log("Verified Phase 12a session family column deployed successfully.");
+  console.log("Verified pre-existing user preserved and is_two_factor_enabled defaulted to false.");
 
-  const resetTokenTable: any[] = await upgradePrisma.$queryRaw`
-    SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename = 'password_reset_tokens';
+  const existingSession: any[] = await upgradePrisma.$queryRaw`
+    SELECT id, refresh_token_hash FROM sessions WHERE id = ${sampleSessionId}::uuid;
   `;
-  if (resetTokenTable.length !== 1) {
-    throw new Error("Phase 12b-1 password_reset_tokens table not found!");
+  if (existingSession.length !== 1) {
+    throw new Error("Existing session not preserved after migration deploy!");
   }
+  console.log("Verified pre-existing session preserved after upgrade.");
 
-  const verifyTokenTable: any[] = await upgradePrisma.$queryRaw`
-    SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename = 'email_verification_tokens';
+  const existingResetToken: any[] = await upgradePrisma.$queryRaw`
+    SELECT id, token_hash FROM password_reset_tokens WHERE id = ${sampleResetTokenId}::uuid;
   `;
-  if (verifyTokenTable.length !== 1) {
-    throw new Error("Phase 12b-1 email_verification_tokens table not found!");
+  if (existingResetToken.length !== 1) {
+    throw new Error("Existing password reset token not preserved after migration deploy!");
   }
+  console.log("Verified pre-existing password reset token preserved after upgrade.");
 
-  const userEmailVerifiedCol: any[] = await upgradePrisma.$queryRaw`
-    SELECT column_name FROM information_schema.columns 
-    WHERE table_name = 'users' AND column_name = 'email_verified_at';
+  const existingVerifyToken: any[] = await upgradePrisma.$queryRaw`
+    SELECT id, token_hash FROM email_verification_tokens WHERE id = ${sampleVerifyTokenId}::uuid;
   `;
-  if (userEmailVerifiedCol.length !== 1) {
-    throw new Error("Phase 12b-1 email_verified_at column on users table not found!");
+  if (existingVerifyToken.length !== 1) {
+    throw new Error("Existing email verification token not preserved after migration deploy!");
   }
-  console.log("Verified Phase 12b-1 account lifecycle tables and columns deployed successfully.");
+  console.log("Verified pre-existing email verification token preserved after upgrade.");
 
   const totpSecretTable: any[] = await upgradePrisma.$queryRaw`
     SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename = 'user_two_factor_secrets';
@@ -194,14 +177,6 @@ async function main() {
   `;
   if (recoveryCodeTable.length !== 1) {
     throw new Error("Phase 12b-2 user_recovery_codes table not found!");
-  }
-
-  const userTwoFactorCol: any[] = await upgradePrisma.$queryRaw`
-    SELECT column_name FROM information_schema.columns 
-    WHERE table_name = 'users' AND column_name = 'is_two_factor_enabled';
-  `;
-  if (userTwoFactorCol.length !== 1) {
-    throw new Error("Phase 12b-2 is_two_factor_enabled column on users table not found!");
   }
   console.log("Verified Phase 12b-2 TOTP and recovery codes tables deployed successfully.");
 

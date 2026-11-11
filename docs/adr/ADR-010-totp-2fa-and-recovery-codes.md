@@ -44,6 +44,7 @@ ProgressEye requires multi-factor authentication (MFA) via RFC 6238 Time-based O
   - Each code contains 10 characters from RFC 4648 Base32 (50 bits of entropy), displayed to the user as `XXXXX-XXXXX`.
 - **Storage**:
   - The database table `user_recovery_codes` stores only the normalized SHA-256 hash (`code_hash`). Plaintext codes are displayed to the user exactly once.
+  - Uniqueness is enforced on `(user_id, code_hash)` rather than a global unique constraint on `code_hash` alone, precluding cross-user hash collisions while preventing intra-user duplicate codes.
 - **Single-Use**:
   - Redemption atomically sets `used_at = CURRENT_TIMESTAMP(3)`. Replayed recovery codes are rejected.
 - **Shared Attempt Cap**:

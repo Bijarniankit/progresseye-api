@@ -72,7 +72,7 @@ BEGIN
 END $$;
 
 -- Indices for user_recovery_codes
-CREATE UNIQUE INDEX IF NOT EXISTS "user_recovery_codes_code_hash_key" ON "user_recovery_codes"("code_hash");
+CREATE UNIQUE INDEX IF NOT EXISTS "user_recovery_codes_user_id_code_hash_key" ON "user_recovery_codes"("user_id", "code_hash");
 CREATE INDEX IF NOT EXISTS "user_recovery_codes_school_id_user_id_idx" ON "user_recovery_codes"("school_id", "user_id");
 
 -- RLS for user_recovery_codes
