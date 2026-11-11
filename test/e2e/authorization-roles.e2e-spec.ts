@@ -367,7 +367,9 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
         });
 
       expect(res.status).toBe(403);
-      expect(res.body.message).toMatch(/Privilege escalation|missing required permission/);
+      expect(res.body.detail ?? res.body.message).toMatch(
+        /Privilege escalation|missing required permission/,
+      );
     });
 
     it("Platform Permission Isolation: tenant admin cannot create role with platform.* permissions", async () => {
@@ -383,7 +385,7 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
         });
 
       expect(res.status).toBe(403);
-      expect(res.body.message).toMatch(
+      expect(res.body.detail ?? res.body.message).toMatch(
         /Platform permissions .* cannot be assigned to tenant roles/,
       );
     });
@@ -404,7 +406,7 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
         });
 
       expect(res.status).toBe(403);
-      expect(res.body.message).toMatch(/cannot assign roles to yourself/);
+      expect(res.body.detail ?? res.body.message).toMatch(/cannot assign roles to yourself/);
     });
 
     it("Self-Role Modification Prevention: actor cannot modify their own assigned role", async () => {
@@ -436,7 +438,9 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
         .set("Authorization", `Bearer ${principalAToken}`);
 
       expect(res.status).toBe(403);
-      expect(res.body.message).toMatch(/Built-in system roles cannot be deleted/);
+      expect(res.body.detail ?? res.body.message).toMatch(
+        /Built-in system roles cannot be deleted/,
+      );
     });
 
     it("Cross-Tenant Isolation: School A principal cannot access or modify School B roles", async () => {
@@ -510,7 +514,9 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
         });
 
       expect(secondUnassign.status).toBe(400);
-      expect(secondUnassign.body.message).toMatch(/CANNOT_REMOVE_LAST_ADMIN/);
+      expect(secondUnassign.body.detail ?? secondUnassign.body.message).toMatch(
+        /CANNOT_REMOVE_LAST_ADMIN/,
+      );
     });
 
     it("Last-Admin Concurrency Test: concurrent unassign attempts cannot leave zero admins", async () => {

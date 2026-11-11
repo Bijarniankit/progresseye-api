@@ -1315,7 +1315,12 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
         .expect(400);
     });
 
-    it("should format email text and html containing token link only after '#' and never after '?'", () => {
+    it("should format email text and html containing token link only after '#' and never after '?'", async () => {
+      // Allow BullMQ worker time to deliver enqueued auth emails
+      for (let i = 0; i < 30 && (!capturedResetEmailPayload || !capturedVerifyEmailPayload); i++) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+
       expect(capturedResetEmailPayload).toBeDefined();
       expect(capturedResetEmailPayload.subject).toBe("Reset Your ProgressEye Password");
       expect(capturedResetEmailPayload.subject).not.toContain(capturedResetCompoundToken);

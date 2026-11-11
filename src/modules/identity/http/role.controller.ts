@@ -10,7 +10,6 @@ import {
   Put,
   Req,
   UseGuards,
-  UsePipes,
 } from "@nestjs/common";
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from "@nestjs/swagger";
 import type { FastifyRequest } from "fastify";
@@ -70,36 +69,39 @@ export class RoleController {
   }
 
   @Post("roles")
+  @HttpCode(HttpStatus.CREATED)
   @RequirePermission("create", "identity.role")
-  @UsePipes(new ZodValidationPipe(createRoleSchema))
   @ApiOperation({ summary: "Create a custom role with anti-escalation validation" })
   @ApiResponse({ status: 201, description: "Role created" })
-  async createRole(@Req() req: AuthenticatedRequest, @Body() dto: CreateRoleDto) {
+  async createRole(
+    @Req() req: AuthenticatedRequest,
+    @Body(new ZodValidationPipe(createRoleSchema)) dto: CreateRoleDto,
+  ) {
     return this.roleService.createRole(req.user.schoolId, req.user.userId, dto);
   }
 
   @Post("roles/:id/clone")
+  @HttpCode(HttpStatus.CREATED)
   @RequirePermission("create", "identity.role")
-  @UsePipes(new ZodValidationPipe(cloneRoleSchema))
   @ApiOperation({ summary: "Clone an existing role into a custom role" })
   @ApiResponse({ status: 201, description: "Role cloned" })
   async cloneRole(
     @Req() req: AuthenticatedRequest,
     @Param("id") id: string,
-    @Body() dto: CloneRoleDto,
+    @Body(new ZodValidationPipe(cloneRoleSchema)) dto: CloneRoleDto,
   ) {
     return this.roleService.cloneRole(req.user.schoolId, req.user.userId, id, dto);
   }
 
   @Put("roles/:id")
+  @HttpCode(HttpStatus.OK)
   @RequirePermission("update", "identity.role")
-  @UsePipes(new ZodValidationPipe(updateRoleSchema))
   @ApiOperation({ summary: "Update a custom role" })
   @ApiResponse({ status: 200, description: "Role updated" })
   async updateRole(
     @Req() req: AuthenticatedRequest,
     @Param("id") id: string,
-    @Body() dto: UpdateRoleDto,
+    @Body(new ZodValidationPipe(updateRoleSchema)) dto: UpdateRoleDto,
   ) {
     return this.roleService.updateRole(req.user.schoolId, req.user.userId, id, dto);
   }
@@ -114,20 +116,26 @@ export class RoleController {
   }
 
   @Post("roles/assign")
+  @HttpCode(HttpStatus.OK)
   @RequirePermission("assign", "identity.role")
-  @UsePipes(new ZodValidationPipe(assignRoleSchema))
   @ApiOperation({ summary: "Assign a role to a user" })
   @ApiResponse({ status: 200, description: "Role assigned" })
-  async assignRole(@Req() req: AuthenticatedRequest, @Body() dto: AssignRoleDto) {
+  async assignRole(
+    @Req() req: AuthenticatedRequest,
+    @Body(new ZodValidationPipe(assignRoleSchema)) dto: AssignRoleDto,
+  ) {
     return this.roleService.assignRole(req.user.schoolId, req.user.userId, dto);
   }
 
   @Post("roles/unassign")
+  @HttpCode(HttpStatus.OK)
   @RequirePermission("assign", "identity.role")
-  @UsePipes(new ZodValidationPipe(assignRoleSchema))
   @ApiOperation({ summary: "Unassign a role from a user" })
   @ApiResponse({ status: 200, description: "Role unassigned" })
-  async unassignRole(@Req() req: AuthenticatedRequest, @Body() dto: AssignRoleDto) {
+  async unassignRole(
+    @Req() req: AuthenticatedRequest,
+    @Body(new ZodValidationPipe(assignRoleSchema)) dto: AssignRoleDto,
+  ) {
     return this.roleService.unassignRole(req.user.schoolId, req.user.userId, dto);
   }
 
