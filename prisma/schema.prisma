@@ -51,6 +51,8 @@ model School {
   counters        Counter[]
   passwordResetTokens PasswordResetToken[]
   emailVerificationTokens EmailVerificationToken[]
+  twoFactorSecrets    UserTwoFactorSecret[]
+  recoveryCodes       UserRecoveryCode[]
 
   @@map("schools")
 }
@@ -93,6 +95,7 @@ model User {
   lockedUntil         DateTime? @map("locked_until")
   lastLoginAt         DateTime? @map("last_login_at")
   emailVerifiedAt     DateTime? @map("email_verified_at")
+  isTwoFactorEnabled  Boolean   @default(false) @map("is_two_factor_enabled")
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt    DateTime  @updatedAt @map("updated_at")
   deletedAt    DateTime? @map("deleted_at")
@@ -103,6 +106,8 @@ model User {
   auditLogs AuditLog[]
   passwordResetTokens     PasswordResetToken[]
   emailVerificationTokens EmailVerificationToken[]
+  twoFactorSecret         UserTwoFactorSecret?
+  recoveryCodes           UserRecoveryCode[]
 
   @@index([schoolId])
   @@map("users")
@@ -352,4 +357,47 @@ model EmailVerificationToken {
   @@index([schoolId, userId])
   @@map("email_verification_tokens")
 }
+
+// ---------------------------------------------------------
+// 15. Two-Factor Authentication Secrets (Tenant Scoped, Encrypted)
+// ---------------------------------------------------------
+model UserTwoFactorSecret {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId        String    @map("school_id") @db.Uuid
+  userId          String    @unique @map("user_id") @db.Uuid
+  encryptedSecret String    @map("encrypted_secret")
+  iv              String    @map("iv")
+  authTag         String    @map("auth_tag")
+  isVerified      Boolean   @default(false) @map("is_verified")
+  verifiedAt      DateTime? @map("verified_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId, userId])
+  @@map("user_two_factor_secrets")
+}
+
+// ---------------------------------------------------------
+// 16. Two-Factor Recovery Codes (Tenant Scoped, Single-Use Hashed)
+// ---------------------------------------------------------
+model UserRecoveryCode {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId  String    @map("school_id") @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  codeHash  String    @map("code_hash")
+  usedAt    DateTime? @map("used_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, codeHash])
+  @@index([schoolId, userId])
+  @@map("user_recovery_codes")
+}
+
 

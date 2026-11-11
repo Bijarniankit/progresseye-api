@@ -39,8 +39,18 @@ export class JwtAuthGuard implements CanActivate {
 
     const claims = await this.tokenService.verifyAccessToken(token);
 
+    if (claims.scope === "2fa_pending") {
+      throw new ForbiddenException(
+        "Two-factor authentication completion required before accessing this resource.",
+      );
+    }
+
     if (claims.scope === "pwd_change_pending") {
       throw new ForbiddenException("Password change required before accessing this resource.");
+    }
+
+    if (claims.scope && claims.scope !== "access") {
+      throw new ForbiddenException("Invalid token scope for this resource.");
     }
 
     // Validate that schoolId is a valid non-nil UUID

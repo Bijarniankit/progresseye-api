@@ -103,6 +103,27 @@ export class TokenService {
   }
 
   /**
+   * Signs a 5-minute temporary token restricted to completing two-factor authentication.
+   */
+  async createTemporaryTwoFactorToken(claims: {
+    userId: string;
+    schoolId: string;
+  }): Promise<{ token: string; expiresIn: number }> {
+    const expiresInSeconds = 5 * 60; // 5 minutes
+    const token = await new SignJWT({
+      schoolId: claims.schoolId,
+      scope: "2fa_pending",
+    })
+      .setSubject(claims.userId)
+      .setProtectedHeader({ alg: "HS256", kid: this.jwtKid })
+      .setIssuedAt()
+      .setExpirationTime(`${expiresInSeconds}s`)
+      .sign(this.jwtSecret);
+
+    return { token, expiresIn: expiresInSeconds };
+  }
+
+  /**
    * Signs a 15-minute temporary token restricted to first-login password change.
    */
   async createTemporaryPasswordChangeToken(claims: {
@@ -160,11 +181,11 @@ export class TokenService {
       }
 
       const scope = (payload.scope as string) || "access";
-      if (scope === "pwd_change_pending") {
+      if (scope === "pwd_change_pending" || scope === "2fa_pending") {
         return {
           sub: payload.sub,
           schoolId: payload.schoolId as string,
-          sessionId: "pwd_change_pending",
+          sessionId: scope,
           scope,
           iat: payload.iat,
           exp: payload.exp,

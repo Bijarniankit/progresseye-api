@@ -25,15 +25,26 @@ import {
   LoginResponseDto,
   RefreshResponseDto,
   SessionListDto,
+  TwoFactorEnableResponseDto,
+  TwoFactorSetupResponseDto,
 } from "../dto/auth-response.dto";
 import { ChangePasswordDto, ChangePasswordSchema } from "../dto/change-password.dto";
+import { Disable2FaDto, Disable2FaSchema } from "../dto/disable-2fa.dto";
+import { Enable2FaDto, Enable2FaSchema } from "../dto/enable-2fa.dto";
 import { FirstLoginPasswordDto, FirstLoginPasswordSchema } from "../dto/first-login-password.dto";
 import { ForgotPasswordDto, ForgotPasswordSchema } from "../dto/forgot-password.dto";
 import { LoginDto, LoginSchema } from "../dto/login.dto";
 import { PasswordStrengthDto, PasswordStrengthSchema } from "../dto/password-strength.dto";
+import { RecoveryCodeVerifyDto, RecoveryCodeVerifySchema } from "../dto/recovery-code-verify.dto";
 import { RefreshDto, RefreshSchema } from "../dto/refresh.dto";
+import {
+  RegenerateRecoveryCodesDto,
+  RegenerateRecoveryCodesSchema,
+} from "../dto/regenerate-recovery-codes.dto";
 import { ResendVerificationDto, ResendVerificationSchema } from "../dto/resend-verification.dto";
 import { ResetPasswordDto, ResetPasswordSchema } from "../dto/reset-password.dto";
+import { SmsOtpDto, SmsOtpSchema } from "../dto/sms-otp.dto";
+import { TotpVerifyDto, TotpVerifySchema } from "../dto/totp-verify.dto";
 import { VerifyEmailDto, VerifyEmailSchema } from "../dto/verify-email.dto";
 import { CurrentUser } from "./decorators/current-user.decorator";
 import { type AuthenticatedUser, JwtAuthGuard } from "./guards/jwt-auth.guard";
@@ -75,6 +86,15 @@ export class AuthController {
       ip: clientIp,
       userAgent,
     });
+
+    if (result.requires2Fa) {
+      return {
+        requires2Fa: true,
+        temporaryToken: result.temporaryToken,
+        expiresIn: result.expiresIn,
+        user: result.user,
+      };
+    }
 
     if (result.mustChangePassword) {
       return {
@@ -355,5 +375,164 @@ export class AuthController {
   ): Promise<GenericMessageResponseDto> {
     const clientIp = req.ip || "127.0.0.1";
     return this.authService.resendVerification(dto, { ip: clientIp });
+  }
+
+  @Post("2fa/setup")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "Initialize TOTP two-factor setup and obtain secret URI" })
+  @ApiResponse({ status: 200, type: TwoFactorSetupResponseDto })
+  @ApiResponse({ status: 401, description: "Unauthorized" })
+  async setup2Fa(@CurrentUser() user: AuthenticatedUser): Promise<TwoFactorSetupResponseDto> {
+    return this.authService.setup2Fa(user.schoolId, user.userId);
+  }
+
+  @Post("2fa/enable")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "Verify first code to activate 2FA and receive recovery codes" })
+  @ApiResponse({ status: 200, type: TwoFactorEnableResponseDto })
+  @ApiResponse({ status: 400, description: "Invalid code or setup not initiated" })
+  async enable2Fa(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body(new ZodValidationPipe(Enable2FaSchema)) dto: Enable2FaDto,
+  ): Promise<TwoFactorEnableResponseDto> {
+    return this.authService.enable2Fa(user.schoolId, user.userId, dto.code);
+  }
+
+  @Post("2fa/verify")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Complete login with 6-digit TOTP code and temporary token" })
+  @ApiResponse({ status: 200, type: LoginResponseDto })
+  @ApiResponse({ status: 401, description: "Invalid credentials" })
+  @ApiResponse({ status: 503, description: "Authentication service temporarily unavailable" })
+  async verify2Fa(
+    @Body(new ZodValidationPipe(TotpVerifySchema)) dto: TotpVerifyDto,
+    @Req() req: FastifyRequest,
+    @Res({ passthrough: true }) res: FastifyReply,
+  ): Promise<LoginResponseDto> {
+    const isMobile =
+      req.headers["x-client-type"] === "mobile" || req.headers["X-Client-Type"] === "mobile";
+    const clientIp = req.ip || "127.0.0.1";
+    const userAgent = req.headers["user-agent"];
+
+    const result = await this.authService.verify2Fa(dto, {
+      ip: clientIp,
+      userAgent,
+      clientType: isMobile ? "mobile" : "web",
+    });
+
+    if (result.mustChangePassword) {
+      return {
+        mustChangePassword: true,
+        temporaryToken: result.temporaryToken,
+        expiresIn: result.expiresIn,
+        user: result.user,
+      };
+    }
+
+    res.setCookie("pe_refresh_token", result.compoundRefreshToken!, {
+      path: "/api/v1/auth",
+      httpOnly: true,
+      secure: this.isProd,
+      sameSite: "lax",
+      maxAge: 30 * 24 * 60 * 60, // 30 days
+    });
+
+    return {
+      accessToken: result.accessToken,
+      expiresIn: result.expiresIn,
+      user: result.user,
+      refreshToken: isMobile ? result.compoundRefreshToken : undefined,
+    };
+  }
+
+  @Post("2fa/recovery")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Complete login using single-use recovery code and temporary token" })
+  @ApiResponse({ status: 200, type: LoginResponseDto })
+  @ApiResponse({ status: 401, description: "Invalid credentials" })
+  async verifyRecoveryCode(
+    @Body(new ZodValidationPipe(RecoveryCodeVerifySchema)) dto: RecoveryCodeVerifyDto,
+    @Req() req: FastifyRequest,
+    @Res({ passthrough: true }) res: FastifyReply,
+  ): Promise<LoginResponseDto> {
+    const isMobile =
+      req.headers["x-client-type"] === "mobile" || req.headers["X-Client-Type"] === "mobile";
+    const clientIp = req.ip || "127.0.0.1";
+    const userAgent = req.headers["user-agent"];
+
+    const result = await this.authService.verifyRecoveryCode(dto, {
+      ip: clientIp,
+      userAgent,
+      clientType: isMobile ? "mobile" : "web",
+    });
+
+    if (result.mustChangePassword) {
+      return {
+        mustChangePassword: true,
+        temporaryToken: result.temporaryToken,
+        expiresIn: result.expiresIn,
+        user: result.user,
+      };
+    }
+
+    res.setCookie("pe_refresh_token", result.compoundRefreshToken!, {
+      path: "/api/v1/auth",
+      httpOnly: true,
+      secure: this.isProd,
+      sameSite: "lax",
+      maxAge: 30 * 24 * 60 * 60, // 30 days
+    });
+
+    return {
+      accessToken: result.accessToken,
+      expiresIn: result.expiresIn,
+      user: result.user,
+      refreshToken: isMobile ? result.compoundRefreshToken : undefined,
+    };
+  }
+
+  @Post("2fa/disable")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "Disable two-factor authentication" })
+  @ApiResponse({ status: 200, type: GenericMessageResponseDto })
+  async disable2Fa(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body(new ZodValidationPipe(Disable2FaSchema)) dto: Disable2FaDto,
+  ): Promise<GenericMessageResponseDto> {
+    return this.authService.disable2Fa(user.schoolId, user.userId, user.sessionId, dto);
+  }
+
+  @Post("2fa/recovery/regenerate")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "Regenerate single-use recovery codes and revoke older codes" })
+  @ApiResponse({ status: 200, type: TwoFactorEnableResponseDto })
+  async regenerateRecoveryCodes(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body(new ZodValidationPipe(RegenerateRecoveryCodesSchema)) dto: RegenerateRecoveryCodesDto,
+  ): Promise<TwoFactorEnableResponseDto> {
+    return this.authService.regenerateRecoveryCodes(
+      user.schoolId,
+      user.userId,
+      user.sessionId,
+      dto,
+    );
+  }
+
+  @Post("sms/send-otp")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Request one-time SMS verification code (stub)" })
+  @ApiResponse({ status: 200, type: GenericMessageResponseDto })
+  async sendSmsOtp(
+    @Body(new ZodValidationPipe(SmsOtpSchema)) dto: SmsOtpDto,
+  ): Promise<GenericMessageResponseDto> {
+    return this.authService.sendSmsOtp(dto);
   }
 }

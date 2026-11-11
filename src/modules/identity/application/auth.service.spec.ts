@@ -10,6 +10,7 @@ import { AppConfigService } from "../../../config/config.service";
 import { AbusePreventionService } from "../domain/abuse-prevention.service";
 import { PasswordService } from "../domain/password.service";
 import { TokenService } from "../domain/token.service";
+import { TotpService } from "../domain/totp.service";
 import { AuthEmailNotificationService } from "../infra/auth-email-notification.service";
 import { SessionRepository } from "../infra/session.repository";
 import { AuthService } from "./auth.service";
@@ -21,6 +22,7 @@ describe("AuthService", () => {
   let mockTokenService: Partial<jest.Mocked<TokenService>>;
   let mockAbuseService: Partial<jest.Mocked<AbusePreventionService>>;
   let mockEmailNotificationService: Partial<jest.Mocked<AuthEmailNotificationService>>;
+  let mockTotpService: Partial<jest.Mocked<TotpService>>;
   let mockConfig: { get: jest.Mock };
 
   const schoolId = "018f0000-0000-7000-8000-000000000001";
@@ -59,6 +61,15 @@ describe("AuthService", () => {
       findEmailVerificationToken: jest.fn(),
       markEmailVerified: jest.fn(),
       recordAuditLog: jest.fn(),
+      findSchoolById: jest
+        .fn()
+        .mockResolvedValue({ id: schoolId, slug: "demo-school", name: "Demo School" }),
+      upsertTwoFactorSecret: jest.fn().mockResolvedValue(undefined),
+      findTwoFactorSecret: jest.fn(),
+      enableTwoFactor: jest.fn().mockResolvedValue(undefined),
+      disableTwoFactor: jest.fn().mockResolvedValue(undefined),
+      regenerateRecoveryCodes: jest.fn().mockResolvedValue(undefined),
+      verifyAndConsumeRecoveryCode: jest.fn(),
     };
 
     mockPasswordService = {
@@ -86,6 +97,9 @@ describe("AuthService", () => {
       createTemporaryPasswordChangeToken: jest
         .fn()
         .mockResolvedValue({ token: "temp-pwd-jwt", expiresIn: 900 }),
+      createTemporaryTwoFactorToken: jest
+        .fn()
+        .mockResolvedValue({ token: "temp-2fa-jwt", expiresIn: 300 }),
       createAccessToken: jest.fn().mockResolvedValue({ token: "jwt-access-token", expiresIn: 900 }),
       verifyAccessToken: jest.fn(),
     };
@@ -110,6 +124,33 @@ describe("AuthService", () => {
       sendEmailVerificationEmail: jest.fn().mockResolvedValue(undefined),
     };
 
+    mockTotpService = {
+      generateSecret: jest.fn().mockReturnValue("JBSWY3DPEHPK3PXP"),
+      generateOtpAuthUri: jest
+        .fn()
+        .mockReturnValue("otpauth://totp/Demo%20School:user%40example.com?secret=JBSWY3DPEHPK3PXP"),
+      generateTotpSetup: jest.fn().mockReturnValue({
+        secret: "JBSWY3DPEHPK3PXP",
+        uri: "otpauth://totp/Demo%20School:user%40example.com?secret=JBSWY3DPEHPK3PXP",
+      }),
+      encryptSecret: jest.fn().mockReturnValue({
+        encryptedSecret: "enc-secret-hex",
+        iv: "iv-hex",
+        authTag: "tag-hex",
+      }),
+      decryptSecret: jest.fn().mockReturnValue("JBSWY3DPEHPK3PXP"),
+      generateCode: jest.fn().mockReturnValue("123456"),
+      verifyCodeWithoutReplay: jest.fn().mockReturnValue(12345),
+      verifyTotpCode: jest.fn().mockResolvedValue(true),
+      generateRecoveryCodes: jest.fn().mockReturnValue({
+        plainCodes: ["AAAAA-BBBBB", "CCCCC-DDDDD"],
+        hashedCodes: ["hash1", "hash2"],
+      }),
+      hashRecoveryCode: jest.fn().mockReturnValue("hash1"),
+      checkAndIncrementAttemptCap: jest.fn().mockResolvedValue(true),
+      resetAttemptCap: jest.fn().mockResolvedValue(undefined),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
@@ -120,6 +161,7 @@ describe("AuthService", () => {
         { provide: AbusePreventionService, useValue: mockAbuseService },
         { provide: AuthEmailNotificationService, useValue: mockEmailNotificationService },
         { provide: AppConfigService, useValue: mockConfig },
+        { provide: TotpService, useValue: mockTotpService },
       ],
     }).compile();
 
@@ -631,6 +673,299 @@ describe("AuthService", () => {
           "$argon2id$new-hash",
         );
         expect(mockSessionRepo.revokeAllUserSessions).toHaveBeenCalledWith(schoolId, userId);
+      });
+    });
+  });
+
+  describe("Phase 12b-2: TOTP 2FA, Recovery Codes & SMS Stub", () => {
+    describe("login with 2FA enabled", () => {
+      it("should issue temporaryToken with 2fa_pending scope and return requires2Fa: true without creating session", async () => {
+        mockSessionRepo.findSchoolBySlug?.mockResolvedValue({
+          id: schoolId,
+          slug: "test-school",
+          name: "Test School",
+          isActive: true,
+        });
+
+        mockSessionRepo.findUserByEmail?.mockResolvedValue({
+          id: userId,
+          schoolId,
+          email: "alice@test.com",
+          firstName: "Alice",
+          lastName: "Alpha",
+          passwordHash: "$argon2id$hashed",
+          isActive: true,
+          mustChangePassword: false,
+          isTwoFactorEnabled: true,
+          userRoles: [{ role: { name: "Teacher" } }],
+        } as any);
+
+        mockPasswordService.verify?.mockResolvedValue(true);
+
+        const result = await service.login(
+          {
+            schoolSlug: "test-school",
+            email: "alice@test.com",
+            password: "Password123!",
+            clientType: "web",
+          },
+          { ip: "127.0.0.1" },
+        );
+
+        expect(result.requires2Fa).toBe(true);
+        expect(result.temporaryToken).toBe("temp-2fa-jwt");
+        expect(mockTokenService.createTemporaryTwoFactorToken).toHaveBeenCalledWith({
+          userId,
+          schoolId,
+        });
+        expect(mockSessionRepo.createSession).not.toHaveBeenCalled();
+      });
+    });
+
+    describe("setup2Fa()", () => {
+      it("should generate secret, encrypt it, upsert pending record, and return URI", async () => {
+        mockSessionRepo.findUserById?.mockResolvedValue({
+          id: userId,
+          schoolId,
+          email: "alice@test.com",
+        } as any);
+
+        const result = await service.setup2Fa(schoolId, userId);
+
+        expect(result.secret).toBe("JBSWY3DPEHPK3PXP");
+        expect(result.uri).toContain("otpauth://totp");
+        expect(mockTotpService.encryptSecret).toHaveBeenCalledWith("JBSWY3DPEHPK3PXP");
+        expect(mockSessionRepo.upsertTwoFactorSecret).toHaveBeenCalledWith({
+          schoolId,
+          userId,
+          encryptedSecret: "enc-secret-hex",
+          iv: "iv-hex",
+          authTag: "tag-hex",
+        });
+      });
+    });
+
+    describe("enable2Fa()", () => {
+      it("should verify initial code, generate 8 recovery codes, and mark 2FA active in repo", async () => {
+        mockSessionRepo.findTwoFactorSecret?.mockResolvedValue({
+          schoolId,
+          userId,
+          encryptedSecret: "enc-secret-hex",
+          iv: "iv-hex",
+          authTag: "tag-hex",
+          isVerified: false,
+        } as any);
+
+        const result = await service.enable2Fa(schoolId, userId, "123456");
+
+        expect(result.recoveryCodes).toEqual(["AAAAA-BBBBB", "CCCCC-DDDDD"]);
+        expect(mockSessionRepo.enableTwoFactor).toHaveBeenCalledWith({
+          schoolId,
+          userId,
+          recoveryCodeHashes: ["hash1", "hash2"],
+        });
+      });
+
+      it("should reject invalid verification code", async () => {
+        mockSessionRepo.findTwoFactorSecret?.mockResolvedValue({
+          schoolId,
+          userId,
+          encryptedSecret: "enc-secret-hex",
+          iv: "iv-hex",
+          authTag: "tag-hex",
+          isVerified: false,
+        } as any);
+
+        mockTotpService.verifyCodeWithoutReplay?.mockReturnValue(null);
+
+        await expect(service.enable2Fa(schoolId, userId, "000000")).rejects.toThrow(
+          "Invalid verification code.",
+        );
+      });
+    });
+
+    describe("verify2Fa()", () => {
+      it("should verify 2fa_pending token, check attempt cap, verify TOTP, reset cap, and create session", async () => {
+        mockTokenService.verifyAccessToken?.mockResolvedValue({
+          sub: userId,
+          schoolId,
+          scope: "2fa_pending",
+          sessionId: "2fa_pending",
+        });
+
+        mockSessionRepo.findTwoFactorSecret?.mockResolvedValue({
+          schoolId,
+          userId,
+          encryptedSecret: "enc-secret-hex",
+          iv: "iv-hex",
+          authTag: "tag-hex",
+          isVerified: true,
+        } as any);
+
+        mockSessionRepo.findUserById?.mockResolvedValue({
+          id: userId,
+          schoolId,
+          email: "alice@test.com",
+          firstName: "Alice",
+          lastName: "Alpha",
+          isActive: true,
+          mustChangePassword: false,
+          isTwoFactorEnabled: true,
+          userRoles: [{ role: { name: "Teacher" } }],
+        } as any);
+
+        mockSessionRepo.createSession?.mockResolvedValue({ id: sessionId } as any);
+
+        const result = await service.verify2Fa(
+          { temporaryToken: "temp-2fa-jwt", code: "123456" },
+          { ip: "127.0.0.1" },
+        );
+
+        expect(result.accessToken).toBe("jwt-access-token");
+        expect(result.user.isTwoFactorEnabled).toBe(true);
+        expect(mockTotpService.checkAndIncrementAttemptCap).toHaveBeenCalledWith(userId);
+        expect(mockTotpService.resetAttemptCap).toHaveBeenCalledWith(userId);
+        expect(mockSessionRepo.createSession).toHaveBeenCalled();
+      });
+
+      it("should reject with generic 401 when code is invalid or replayed", async () => {
+        mockTokenService.verifyAccessToken?.mockResolvedValue({
+          sub: userId,
+          schoolId,
+          scope: "2fa_pending",
+          sessionId: "2fa_pending",
+        });
+
+        mockSessionRepo.findTwoFactorSecret?.mockResolvedValue({
+          schoolId,
+          userId,
+          encryptedSecret: "enc-secret-hex",
+          iv: "iv-hex",
+          authTag: "tag-hex",
+          isVerified: true,
+        } as any);
+
+        mockTotpService.verifyTotpCode?.mockResolvedValue(false);
+
+        await expect(
+          service.verify2Fa(
+            { temporaryToken: "temp-2fa-jwt", code: "000000" },
+            { ip: "127.0.0.1" },
+          ),
+        ).rejects.toThrow(UnauthorizedException);
+      });
+    });
+
+    describe("verifyRecoveryCode()", () => {
+      it("should consume valid recovery code and issue session", async () => {
+        mockTokenService.verifyAccessToken?.mockResolvedValue({
+          sub: userId,
+          schoolId,
+          scope: "2fa_pending",
+          sessionId: "2fa_pending",
+        });
+
+        mockSessionRepo.verifyAndConsumeRecoveryCode?.mockResolvedValue(true);
+
+        mockSessionRepo.findUserById?.mockResolvedValue({
+          id: userId,
+          schoolId,
+          email: "alice@test.com",
+          firstName: "Alice",
+          lastName: "Alpha",
+          isActive: true,
+          mustChangePassword: false,
+          isTwoFactorEnabled: true,
+          userRoles: [{ role: { name: "Teacher" } }],
+        } as any);
+
+        mockSessionRepo.createSession?.mockResolvedValue({ id: sessionId } as any);
+
+        const result = await service.verifyRecoveryCode(
+          { temporaryToken: "temp-2fa-jwt", recoveryCode: "AAAAA-BBBBB" },
+          { ip: "127.0.0.1" },
+        );
+
+        expect(result.accessToken).toBe("jwt-access-token");
+        expect(mockSessionRepo.verifyAndConsumeRecoveryCode).toHaveBeenCalled();
+        expect(mockTotpService.resetAttemptCap).toHaveBeenCalledWith(userId);
+      });
+
+      it("should reject with generic 401 when recovery code is already consumed or wrong", async () => {
+        mockTokenService.verifyAccessToken?.mockResolvedValue({
+          sub: userId,
+          schoolId,
+          scope: "2fa_pending",
+          sessionId: "2fa_pending",
+        });
+
+        mockSessionRepo.verifyAndConsumeRecoveryCode?.mockResolvedValue(false);
+
+        await expect(
+          service.verifyRecoveryCode(
+            { temporaryToken: "temp-2fa-jwt", recoveryCode: "WRONG-CODE" },
+            { ip: "127.0.0.1" },
+          ),
+        ).rejects.toThrow(UnauthorizedException);
+      });
+    });
+
+    describe("disable2Fa()", () => {
+      it("should verify password and code, then disable 2FA", async () => {
+        mockSessionRepo.findUserById?.mockResolvedValue({
+          id: userId,
+          schoolId,
+          passwordHash: "$argon2id$hashed",
+        } as any);
+        mockPasswordService.verify?.mockResolvedValue(true);
+
+        mockSessionRepo.findTwoFactorSecret?.mockResolvedValue({
+          schoolId,
+          userId,
+          encryptedSecret: "enc-secret-hex",
+          iv: "iv-hex",
+          authTag: "tag-hex",
+          isVerified: true,
+        } as any);
+
+        const result = await service.disable2Fa(schoolId, userId, sessionId, {
+          password: "CurrentPassword123!",
+          code: "123456",
+        });
+
+        expect(result.message).toContain("disabled successfully");
+        expect(mockSessionRepo.disableTwoFactor).toHaveBeenCalledWith(schoolId, userId, sessionId);
+      });
+    });
+
+    describe("regenerateRecoveryCodes()", () => {
+      it("should verify password and regenerate recovery codes", async () => {
+        mockSessionRepo.findUserById?.mockResolvedValue({
+          id: userId,
+          schoolId,
+          passwordHash: "$argon2id$hashed",
+          isTwoFactorEnabled: true,
+        } as any);
+        mockPasswordService.verify?.mockResolvedValue(true);
+
+        const result = await service.regenerateRecoveryCodes(schoolId, userId, sessionId, {
+          password: "CurrentPassword123!",
+        });
+
+        expect(result.recoveryCodes).toEqual(["AAAAA-BBBBB", "CCCCC-DDDDD"]);
+        expect(mockSessionRepo.regenerateRecoveryCodes).toHaveBeenCalled();
+      });
+    });
+
+    describe("sendSmsOtp()", () => {
+      it("should return generic message and mask telephone without throwing", () => {
+        const result = service.sendSmsOtp({
+          schoolSlug: "test-school",
+          email: "alice@test.com",
+          phoneNumber: "+15551234567",
+        });
+
+        expect(result.message).toContain("eligible for SMS verification");
       });
     });
   });

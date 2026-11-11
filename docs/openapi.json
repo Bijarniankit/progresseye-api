@@ -603,6 +603,255 @@
           "Authentication & Sessions"
         ]
       }
+    },
+    "/api/v1/auth/2fa/setup": {
+      "post": {
+        "operationId": "AuthController_setup2Fa",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TwoFactorSetupResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Initialize TOTP two-factor setup and obtain secret URI",
+        "tags": [
+          "Authentication & Sessions"
+        ]
+      }
+    },
+    "/api/v1/auth/2fa/enable": {
+      "post": {
+        "operationId": "AuthController_enable2Fa",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Enable2FaDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TwoFactorEnableResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid code or setup not initiated"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Verify first code to activate 2FA and receive recovery codes",
+        "tags": [
+          "Authentication & Sessions"
+        ]
+      }
+    },
+    "/api/v1/auth/2fa/verify": {
+      "post": {
+        "operationId": "AuthController_verify2Fa",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TotpVerifyDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials"
+          },
+          "503": {
+            "description": "Authentication service temporarily unavailable"
+          }
+        },
+        "summary": "Complete login with 6-digit TOTP code and temporary token",
+        "tags": [
+          "Authentication & Sessions"
+        ]
+      }
+    },
+    "/api/v1/auth/2fa/recovery": {
+      "post": {
+        "operationId": "AuthController_verifyRecoveryCode",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecoveryCodeVerifyDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials"
+          }
+        },
+        "summary": "Complete login using single-use recovery code and temporary token",
+        "tags": [
+          "Authentication & Sessions"
+        ]
+      }
+    },
+    "/api/v1/auth/2fa/disable": {
+      "post": {
+        "operationId": "AuthController_disable2Fa",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Disable2FaDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericMessageResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Disable two-factor authentication",
+        "tags": [
+          "Authentication & Sessions"
+        ]
+      }
+    },
+    "/api/v1/auth/2fa/recovery/regenerate": {
+      "post": {
+        "operationId": "AuthController_regenerateRecoveryCodes",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegenerateRecoveryCodesDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TwoFactorEnableResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Regenerate single-use recovery codes and revoke older codes",
+        "tags": [
+          "Authentication & Sessions"
+        ]
+      }
+    },
+    "/api/v1/auth/sms/send-otp": {
+      "post": {
+        "operationId": "AuthController_sendSmsOtp",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SmsOtpDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericMessageResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Request one-time SMS verification code (stub)",
+        "tags": [
+          "Authentication & Sessions"
+        ]
+      }
     }
   },
   "info": {
@@ -853,6 +1102,9 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "isTwoFactorEnabled": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -869,6 +1121,9 @@
             "type": "string"
           },
           "mustChangePassword": {
+            "type": "boolean"
+          },
+          "requires2Fa": {
             "type": "boolean"
           },
           "temporaryToken": {
@@ -1096,6 +1351,139 @@
         "required": [
           "schoolSlug",
           "email"
+        ]
+      },
+      "TwoFactorSetupResponseDto": {
+        "type": "object",
+        "properties": {
+          "secret": {
+            "type": "string"
+          },
+          "uri": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "secret",
+          "uri"
+        ]
+      },
+      "Enable2FaDto": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 6,
+            "maxLength": 6,
+            "pattern": "^\\d{6}$"
+          }
+        },
+        "required": [
+          "code"
+        ]
+      },
+      "TwoFactorEnableResponseDto": {
+        "type": "object",
+        "properties": {
+          "recoveryCodes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "recoveryCodes"
+        ]
+      },
+      "TotpVerifyDto": {
+        "type": "object",
+        "properties": {
+          "temporaryToken": {
+            "type": "string",
+            "minLength": 1
+          },
+          "code": {
+            "type": "string",
+            "minLength": 6,
+            "maxLength": 6,
+            "pattern": "^\\d{6}$"
+          }
+        },
+        "required": [
+          "temporaryToken",
+          "code"
+        ]
+      },
+      "RecoveryCodeVerifyDto": {
+        "type": "object",
+        "properties": {
+          "temporaryToken": {
+            "type": "string",
+            "minLength": 1
+          },
+          "recoveryCode": {
+            "type": "string",
+            "minLength": 8
+          }
+        },
+        "required": [
+          "temporaryToken",
+          "recoveryCode"
+        ]
+      },
+      "Disable2FaDto": {
+        "type": "object",
+        "properties": {
+          "password": {
+            "type": "string",
+            "minLength": 1
+          },
+          "code": {
+            "type": "string",
+            "minLength": 6,
+            "maxLength": 6,
+            "pattern": "^\\d{6}$"
+          }
+        },
+        "required": [
+          "password",
+          "code"
+        ]
+      },
+      "RegenerateRecoveryCodesDto": {
+        "type": "object",
+        "properties": {
+          "password": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "password"
+        ]
+      },
+      "SmsOtpDto": {
+        "type": "object",
+        "properties": {
+          "schoolSlug": {
+            "type": "string",
+            "minLength": 1
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+          },
+          "phoneNumber": {
+            "type": "string",
+            "minLength": 7
+          }
+        },
+        "required": [
+          "schoolSlug",
+          "email",
+          "phoneNumber"
         ]
       }
     }

@@ -12,12 +12,19 @@ import { AppConfigService } from "../../../config/config.service";
 import { AbusePreventionService } from "../domain/abuse-prevention.service";
 import { PasswordService } from "../domain/password.service";
 import { TokenService } from "../domain/token.service";
+import { TotpService } from "../domain/totp.service";
 import type { ChangePasswordDto } from "../dto/change-password.dto";
+import type { Disable2FaDto } from "../dto/disable-2fa.dto";
+import type { Enable2FaDto } from "../dto/enable-2fa.dto";
 import type { FirstLoginPasswordDto } from "../dto/first-login-password.dto";
 import type { ForgotPasswordDto } from "../dto/forgot-password.dto";
 import type { LoginDto } from "../dto/login.dto";
+import type { RecoveryCodeVerifyDto } from "../dto/recovery-code-verify.dto";
+import type { RegenerateRecoveryCodesDto } from "../dto/regenerate-recovery-codes.dto";
 import type { ResendVerificationDto } from "../dto/resend-verification.dto";
 import type { ResetPasswordDto } from "../dto/reset-password.dto";
+import type { SmsOtpDto } from "../dto/sms-otp.dto";
+import type { TotpVerifyDto } from "../dto/totp-verify.dto";
 import type { VerifyEmailDto } from "../dto/verify-email.dto";
 import { AuthEmailNotificationService } from "../infra/auth-email-notification.service";
 import { SessionRepository } from "../infra/session.repository";
@@ -36,6 +43,7 @@ export class AuthService {
     private readonly tenantContext: TenantContextService,
     private readonly config: AppConfigService,
     private readonly authEmailNotificationService: AuthEmailNotificationService,
+    private readonly totpService: TotpService,
   ) {
     this.corsOrigin = this.config.get("CORS_ORIGIN");
     this.hmacSecret = this.config.get("AUTH_LOG_HMAC_SECRET");
@@ -107,6 +115,30 @@ export class AuthService {
 
     const roles = user.userRoles.map((ur) => ur.role.name);
 
+    // If two-factor authentication is enabled, issue restricted 2fa_pending token
+    if (user.isTwoFactorEnabled) {
+      const { token: temporaryToken, expiresIn: tempExpiresIn } =
+        await this.tokenService.createTemporaryTwoFactorToken({
+          userId: user.id,
+          schoolId: school.id,
+        });
+
+      return {
+        requires2Fa: true,
+        temporaryToken,
+        expiresIn: tempExpiresIn,
+        user: {
+          id: user.id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          mustChangePassword: user.mustChangePassword,
+          roles,
+          isTwoFactorEnabled: true,
+        },
+      };
+    }
+
     // If first-login forced password change is required, issue a restricted temporary token
     if (user.mustChangePassword) {
       const { token: temporaryToken, expiresIn: tempExpiresIn } =
@@ -126,6 +158,7 @@ export class AuthService {
           lastName: user.lastName,
           mustChangePassword: true,
           roles,
+          isTwoFactorEnabled: false,
         },
       };
     }
@@ -181,6 +214,7 @@ export class AuthService {
         lastName: user.lastName,
         mustChangePassword: user.mustChangePassword,
         roles,
+        isTwoFactorEnabled: user.isTwoFactorEnabled,
       },
     };
   }
@@ -753,6 +787,464 @@ export class AuthService {
       lastName: user.lastName,
       mustChangePassword: user.mustChangePassword,
       roles,
+      isTwoFactorEnabled: user.isTwoFactorEnabled,
+    };
+  }
+
+  /**
+   * Generates a new TOTP secret for the authenticated user and stores it in pending state.
+   */
+  async setup2Fa(schoolId: string, userId: string) {
+    this.tenantContext.validateTenantId(schoolId);
+    const user = await this.sessionRepository.findUserById(schoolId, userId);
+    if (!user) {
+      throw new UnauthorizedException("User not found.");
+    }
+
+    const school = await this.sessionRepository.findSchoolById(schoolId);
+    const secret = this.totpService.generateSecret();
+    const { encryptedSecret, iv, authTag } = this.totpService.encryptSecret(secret);
+
+    await this.sessionRepository.upsertTwoFactorSecret({
+      schoolId,
+      userId,
+      encryptedSecret,
+      iv,
+      authTag,
+    });
+
+    const uri = this.totpService.generateOtpAuthUri(
+      secret,
+      user.email,
+      school?.name ?? "ProgressEye",
+    );
+
+    return { secret, uri };
+  }
+
+  /**
+   * Verifies the initial TOTP code to confirm the authenticator app and enables 2FA.
+   * Generates 8 single-use recovery codes and returns them once to the user.
+   */
+  async enable2Fa(schoolId: string, userId: string, code: string) {
+    this.tenantContext.validateTenantId(schoolId);
+    const secretRecord = await this.sessionRepository.findTwoFactorSecret(schoolId, userId);
+    if (!secretRecord) {
+      throw new BadRequestException("Two-factor authentication setup has not been initiated.");
+    }
+
+    const plainSecret = this.totpService.decryptSecret(
+      secretRecord.encryptedSecret,
+      secretRecord.iv,
+      secretRecord.authTag,
+    );
+    if (!plainSecret) {
+      throw new BadRequestException("Invalid two-factor secret configuration.");
+    }
+
+    const matched = this.totpService.verifyCodeWithoutReplay(plainSecret, code);
+    if (matched === null) {
+      throw new BadRequestException("Invalid verification code.");
+    }
+
+    const { plainCodes, hashedCodes } = this.totpService.generateRecoveryCodes();
+
+    await this.sessionRepository.enableTwoFactor({
+      schoolId,
+      userId,
+      recoveryCodeHashes: hashedCodes,
+    });
+
+    this.logger.log({
+      event: "tenant_audit",
+      action: "AUTH.2FA_ENABLED",
+      schoolId,
+      userId,
+    });
+
+    return { recoveryCodes: plainCodes };
+  }
+
+  /**
+   * Verifies a 6-digit TOTP code during login using a temporary 2fa_pending token.
+   * Enforces replay prevention via Redis and per-user shared attempt cap.
+   * Returns generic 401 error on any verification failure.
+   */
+  async verify2Fa(
+    dto: TotpVerifyDto,
+    meta: { ip: string; userAgent?: string; clientType?: string },
+  ) {
+    let claims: { sub: string; schoolId: string; scope?: string };
+    try {
+      claims = await this.tokenService.verifyAccessToken(dto.temporaryToken);
+    } catch {
+      throw new UnauthorizedException("Invalid two-factor authentication credentials.");
+    }
+
+    if (claims.scope !== "2fa_pending") {
+      throw new UnauthorizedException("Invalid two-factor authentication credentials.");
+    }
+
+    // Shared per-user attempt cap between TOTP and recovery codes (max 5 in 15 min)
+    const withinCap = await this.totpService.checkAndIncrementAttemptCap(claims.sub);
+    if (!withinCap) {
+      this.logger.warn({
+        event: "platform_audit",
+        action: "AUTH.2FA_ATTEMPT_CAP_EXCEEDED",
+        userId: claims.sub,
+        schoolId: claims.schoolId,
+      });
+      throw new UnauthorizedException("Invalid two-factor authentication credentials.");
+    }
+
+    const secretRecord = await this.sessionRepository.findTwoFactorSecret(
+      claims.schoolId,
+      claims.sub,
+    );
+    if (!secretRecord || !secretRecord.isVerified) {
+      throw new UnauthorizedException("Invalid two-factor authentication credentials.");
+    }
+
+    const plainSecret = this.totpService.decryptSecret(
+      secretRecord.encryptedSecret,
+      secretRecord.iv,
+      secretRecord.authTag,
+    );
+    if (!plainSecret) {
+      throw new UnauthorizedException("Invalid two-factor authentication credentials.");
+    }
+
+    const isValid = await this.totpService.verifyTotpCode(claims.sub, plainSecret, dto.code);
+    if (!isValid) {
+      throw new UnauthorizedException("Invalid two-factor authentication credentials.");
+    }
+
+    // Reset attempt cap on success
+    await this.totpService.resetAttemptCap(claims.sub);
+
+    const user = await this.sessionRepository.findUserById(claims.schoolId, claims.sub);
+    if (!user || !user.isActive) {
+      throw new UnauthorizedException("Invalid two-factor authentication credentials.");
+    }
+
+    const roles = user.userRoles.map((ur) => ur.role.name);
+
+    if (user.mustChangePassword) {
+      const { token: temporaryToken, expiresIn: tempExpiresIn } =
+        await this.tokenService.createTemporaryPasswordChangeToken({
+          userId: user.id,
+          schoolId: claims.schoolId,
+        });
+
+      return {
+        mustChangePassword: true,
+        temporaryToken,
+        expiresIn: tempExpiresIn,
+        user: {
+          id: user.id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          mustChangePassword: true,
+          roles,
+          isTwoFactorEnabled: true,
+        },
+      };
+    }
+
+    const rawRefreshToken = this.tokenService.generateRefreshToken();
+    const tokenHash = this.tokenService.hashToken(rawRefreshToken);
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+    const session = await this.sessionRepository.createSession({
+      schoolId: claims.schoolId,
+      userId: user.id,
+      tokenHash,
+      clientType: meta.clientType ?? "web",
+      userAgent: meta.userAgent,
+      ipAddress: meta.ip,
+      expiresAt,
+    });
+
+    const { token: accessToken, expiresIn } = await this.tokenService.createAccessToken({
+      userId: user.id,
+      schoolId: claims.schoolId,
+      sessionId: session.id,
+    });
+
+    const compoundRefreshToken = this.tokenService.buildCompoundRefreshToken(
+      claims.schoolId,
+      rawRefreshToken,
+    );
+
+    await this.sessionRepository.recordAuditLog({
+      schoolId: claims.schoolId,
+      actorId: user.id,
+      action: "AUTH.2FA_LOGIN_SUCCESS",
+      entityId: user.id,
+      metadata: {
+        sessionId: session.id,
+        method: "totp",
+        ipHmac: hmacHash(meta.ip, this.hmacSecret),
+      },
+    });
+
+    return {
+      accessToken,
+      expiresIn,
+      compoundRefreshToken,
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        mustChangePassword: user.mustChangePassword,
+        roles,
+        isTwoFactorEnabled: true,
+      },
+    };
+  }
+
+  /**
+   * Verifies a single-use recovery code during login using a temporary 2fa_pending token.
+   * Returns generic 401 error on any verification failure.
+   */
+  async verifyRecoveryCode(
+    dto: RecoveryCodeVerifyDto,
+    meta: { ip: string; userAgent?: string; clientType?: string },
+  ) {
+    let claims: { sub: string; schoolId: string; scope?: string };
+    try {
+      claims = await this.tokenService.verifyAccessToken(dto.temporaryToken);
+    } catch {
+      throw new UnauthorizedException("Invalid two-factor authentication credentials.");
+    }
+
+    if (claims.scope !== "2fa_pending") {
+      throw new UnauthorizedException("Invalid two-factor authentication credentials.");
+    }
+
+    const withinCap = await this.totpService.checkAndIncrementAttemptCap(claims.sub);
+    if (!withinCap) {
+      this.logger.warn({
+        event: "platform_audit",
+        action: "AUTH.2FA_ATTEMPT_CAP_EXCEEDED",
+        userId: claims.sub,
+        schoolId: claims.schoolId,
+      });
+      throw new UnauthorizedException("Invalid two-factor authentication credentials.");
+    }
+
+    const codeHash = this.totpService.hashRecoveryCode(dto.recoveryCode);
+    const consumed = await this.sessionRepository.verifyAndConsumeRecoveryCode({
+      schoolId: claims.schoolId,
+      userId: claims.sub,
+      codeHash,
+    });
+
+    if (!consumed) {
+      throw new UnauthorizedException("Invalid two-factor authentication credentials.");
+    }
+
+    await this.totpService.resetAttemptCap(claims.sub);
+
+    const user = await this.sessionRepository.findUserById(claims.schoolId, claims.sub);
+    if (!user || !user.isActive) {
+      throw new UnauthorizedException("Invalid two-factor authentication credentials.");
+    }
+
+    const roles = user.userRoles.map((ur) => ur.role.name);
+
+    if (user.mustChangePassword) {
+      const { token: temporaryToken, expiresIn: tempExpiresIn } =
+        await this.tokenService.createTemporaryPasswordChangeToken({
+          userId: user.id,
+          schoolId: claims.schoolId,
+        });
+
+      return {
+        mustChangePassword: true,
+        temporaryToken,
+        expiresIn: tempExpiresIn,
+        user: {
+          id: user.id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          mustChangePassword: true,
+          roles,
+          isTwoFactorEnabled: true,
+        },
+      };
+    }
+
+    const rawRefreshToken = this.tokenService.generateRefreshToken();
+    const tokenHash = this.tokenService.hashToken(rawRefreshToken);
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+    const session = await this.sessionRepository.createSession({
+      schoolId: claims.schoolId,
+      userId: user.id,
+      tokenHash,
+      clientType: meta.clientType ?? "web",
+      userAgent: meta.userAgent,
+      ipAddress: meta.ip,
+      expiresAt,
+    });
+
+    const { token: accessToken, expiresIn } = await this.tokenService.createAccessToken({
+      userId: user.id,
+      schoolId: claims.schoolId,
+      sessionId: session.id,
+    });
+
+    const compoundRefreshToken = this.tokenService.buildCompoundRefreshToken(
+      claims.schoolId,
+      rawRefreshToken,
+    );
+
+    await this.sessionRepository.recordAuditLog({
+      schoolId: claims.schoolId,
+      actorId: user.id,
+      action: "AUTH.2FA_RECOVERY_SUCCESS",
+      entityId: user.id,
+      metadata: {
+        sessionId: session.id,
+        method: "recovery_code",
+        ipHmac: hmacHash(meta.ip, this.hmacSecret),
+      },
+    });
+
+    return {
+      accessToken,
+      expiresIn,
+      compoundRefreshToken,
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        mustChangePassword: user.mustChangePassword,
+        roles,
+        isTwoFactorEnabled: true,
+      },
+    };
+  }
+
+  /**
+   * Disables 2FA after verifying current user password and valid TOTP code.
+   * Revokes 2FA secret, recovery codes, and revokes other active sessions.
+   */
+  async disable2Fa(schoolId: string, userId: string, currentSessionId: string, dto: Disable2FaDto) {
+    this.tenantContext.validateTenantId(schoolId);
+    const user = await this.sessionRepository.findUserById(schoolId, userId);
+    if (!user || !user.passwordHash) {
+      throw new UnauthorizedException("User not found.");
+    }
+
+    const isPasswordValid = await this.passwordService.verify(user.passwordHash, dto.password);
+    if (!isPasswordValid) {
+      throw new UnauthorizedException("Current password is incorrect.");
+    }
+
+    const secretRecord = await this.sessionRepository.findTwoFactorSecret(schoolId, userId);
+    if (!secretRecord || !secretRecord.isVerified) {
+      throw new BadRequestException("Two-factor authentication is not active.");
+    }
+
+    const plainSecret = this.totpService.decryptSecret(
+      secretRecord.encryptedSecret,
+      secretRecord.iv,
+      secretRecord.authTag,
+    );
+    if (!plainSecret) {
+      throw new BadRequestException("Invalid two-factor secret configuration.");
+    }
+
+    const matched = this.totpService.verifyCodeWithoutReplay(plainSecret, dto.code);
+    if (matched === null) {
+      throw new BadRequestException("Invalid verification code.");
+    }
+
+    await this.sessionRepository.disableTwoFactor(schoolId, userId, currentSessionId);
+
+    this.logger.log({
+      event: "tenant_audit",
+      action: "AUTH.2FA_DISABLED",
+      schoolId,
+      userId,
+    });
+
+    return { message: "Two-factor authentication disabled successfully." };
+  }
+
+  /**
+   * Regenerates recovery codes: requires password re-authentication and active 2FA.
+   * Revokes existing recovery codes and revokes other sessions.
+   */
+  async regenerateRecoveryCodes(
+    schoolId: string,
+    userId: string,
+    currentSessionId: string,
+    dto: RegenerateRecoveryCodesDto,
+  ) {
+    this.tenantContext.validateTenantId(schoolId);
+    const user = await this.sessionRepository.findUserById(schoolId, userId);
+    if (!user || !user.passwordHash) {
+      throw new UnauthorizedException("User not found.");
+    }
+
+    if (!user.isTwoFactorEnabled) {
+      throw new BadRequestException(
+        "Two-factor authentication must be enabled to regenerate recovery codes.",
+      );
+    }
+
+    const isPasswordValid = await this.passwordService.verify(user.passwordHash, dto.password);
+    if (!isPasswordValid) {
+      throw new UnauthorizedException("Current password is incorrect.");
+    }
+
+    const { plainCodes, hashedCodes } = this.totpService.generateRecoveryCodes();
+
+    await this.sessionRepository.regenerateRecoveryCodes({
+      schoolId,
+      userId,
+      recoveryCodeHashes: hashedCodes,
+      currentSessionId,
+    });
+
+    this.logger.log({
+      event: "tenant_audit",
+      action: "AUTH.RECOVERY_CODES_REGENERATED",
+      schoolId,
+      userId,
+    });
+
+    return { recoveryCodes: plainCodes };
+  }
+
+  /**
+   * SMS OTP Stub: masks telephone number and logs dispatch intent.
+   * Does NOT store telephone number or OTP in database or logs, and does not contact external providers.
+   */
+  sendSmsOtp(dto: SmsOtpDto) {
+    const cleanPhone = dto.phoneNumber.trim();
+    const visibleSuffix = cleanPhone.slice(-4);
+    const prefix = cleanPhone.slice(0, Math.max(0, cleanPhone.length - 8));
+    const maskedPhone = `${prefix}***-***-${visibleSuffix}`;
+
+    this.logger.log({
+      event: "platform_audit",
+      action: "AUTH.SMS_OTP_REQUESTED",
+      schoolSlug: dto.schoolSlug,
+      maskedPhone,
+      message: `[SMS Stub] OTP dispatch requested for phone ${maskedPhone} (schoolSlug: ${dto.schoolSlug}) - provider contact suppressed in stub mode`,
+    });
+
+    return {
+      message:
+        "If this account is eligible for SMS verification, a one-time code has been dispatched.",
     };
   }
 

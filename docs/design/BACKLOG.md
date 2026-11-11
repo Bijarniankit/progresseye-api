@@ -94,6 +94,14 @@ Deferred maintenance chores and dependency upgrades scheduled for execution at t
 - **Context**: In Phase 12b-1, account lifecycle links place tokens exclusively in the URL fragment (`/auth/reset-password#token=<compoundToken>` and `/auth/verify-email#token=<compoundToken>`), preventing token leakage into HTTP `Referer` headers, server access logs, or browser navigation history.
 - **Requirement for Web (Phase 14)**: The frontend pages for password reset and email verification must parse the token exclusively from `window.location.hash`, include it in the POST request body (`POST /api/v1/auth/reset-password` and `POST /api/v1/auth/verify-email`), and never log the token to browser console or telemetry sinks.
 
+### 16. Post-Verification or IP-Scoped 2FA Attempt Counter
+- **Context**: In Phase 12b-2, `checkAndIncrementAttemptCap` increments the per-user attempt counter (`auth:2fa:attempts:<userId>`) pre-verification before evaluating the TOTP code or recovery code.
+- **Risk**: An attacker who intercepts or holds a victim's temporary `2fa_pending` token could deliberately submit 5 bogus verification requests to exhaust the victim's attempt budget, causing a 15-minute temporary lockout (Denial of Service).
+- **Checklist Item**:
+  - Update the 2FA verification flow to record and increment attempts only upon verification failure (post-verification increment) rather than pre-verification, or partition attempt tracking with an IP dimension (`auth:2fa:attempts:<userId>:<ipHash>`).
+  - Ensure brute-force resistance remains airtight while completely eliminating the risk of a malicious actor burning a victim's attempt budget using an acquired `2fa_pending` token.
+
+
 
 
 
