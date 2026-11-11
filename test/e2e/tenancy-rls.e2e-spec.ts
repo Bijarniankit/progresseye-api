@@ -1088,11 +1088,13 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
       ];
 
       const migrationsDir = path.resolve(__dirname, "../../prisma/migrations");
+      const upgradeDbUrl = `${dbUrlBase}/test_db_from_main`;
 
       for (const mig of baselineMigrations) {
         const migFile = path.join(migrationsDir, mig, "migration.sql");
-        const sql = fs.readFileSync(migFile, "utf8");
-        await mainPrisma.$executeRawUnsafe(sql);
+        execSync(`pnpm prisma db execute --file "${migFile}" --url "${upgradeDbUrl}"`, {
+          encoding: "utf8",
+        });
 
         const checksum = crypto.createHash("sha256").update(fs.readFileSync(migFile)).digest("hex");
         const migId = crypto.randomUUID();
@@ -1113,16 +1115,24 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
       await mainPrisma.$executeRawUnsafe(`
         INSERT INTO schools (id, slug, name, updated_at)
         VALUES ('${sampleSchoolId}'::uuid, 'main-school', 'Main School', CURRENT_TIMESTAMP);
+      `);
 
+      await mainPrisma.$executeRawUnsafe(`
         INSERT INTO users (id, school_id, email, first_name, last_name, password_hash, email_verified_at, updated_at)
         VALUES ('${sampleUserId}'::uuid, '${sampleSchoolId}'::uuid, 'main-user@example.com', 'Main', 'User', 'seeded_hash', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+      `);
 
+      await mainPrisma.$executeRawUnsafe(`
         INSERT INTO sessions (id, school_id, user_id, refresh_token_hash, family_id, expires_at, created_at, updated_at)
         VALUES ('${sampleSessionId}'::uuid, '${sampleSchoolId}'::uuid, '${sampleUserId}'::uuid, 'seeded_refresh_hash', '${sampleFamilyId}'::uuid, CURRENT_TIMESTAMP + INTERVAL '7 days', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+      `);
 
+      await mainPrisma.$executeRawUnsafe(`
         INSERT INTO password_reset_tokens (id, school_id, user_id, token_hash, expires_at, created_at)
         VALUES ('${sampleResetTokenId}'::uuid, '${sampleSchoolId}'::uuid, '${sampleUserId}'::uuid, 'seeded_reset_hash', CURRENT_TIMESTAMP + INTERVAL '1 hour', CURRENT_TIMESTAMP);
+      `);
 
+      await mainPrisma.$executeRawUnsafe(`
         INSERT INTO email_verification_tokens (id, school_id, user_id, token_hash, expires_at, created_at)
         VALUES ('${sampleVerifyTokenId}'::uuid, '${sampleSchoolId}'::uuid, '${sampleUserId}'::uuid, 'seeded_verify_hash', CURRENT_TIMESTAMP + INTERVAL '24 hours', CURRENT_TIMESTAMP);
       `);
@@ -1131,8 +1141,8 @@ describe("Phase 11: Tenancy & Row-Level Security (RLS) Isolation Suite", () => {
       execSync("pnpm prisma migrate deploy", {
         env: {
           ...process.env,
-          DATABASE_URL: `${dbUrlBase}/test_db_from_main`,
-          DIRECT_URL: `${dbUrlBase}/test_db_from_main`,
+          DATABASE_URL: upgradeDbUrl,
+          DIRECT_URL: upgradeDbUrl,
         },
         stdio: "pipe",
       });

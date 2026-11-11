@@ -45,8 +45,9 @@ async function main() {
   await adminPrisma.$executeRawUnsafe(`CREATE DATABASE test_ci_upgrade;`);
   console.log("Created test_ci_upgrade database.");
 
+  const upgradeDbUrl = `${dbUrlBase}/test_ci_upgrade`;
   const upgradePrisma = new PrismaClient({
-    datasources: { db: { url: `${dbUrlBase}/test_ci_upgrade` } },
+    datasources: { db: { url: upgradeDbUrl } },
   });
   await upgradePrisma.$connect();
 
@@ -77,8 +78,9 @@ async function main() {
 
   for (const mig of baselineMigrations) {
     const migFile = path.join(migrationsDir, mig, "migration.sql");
-    const sql = fs.readFileSync(migFile, "utf8");
-    await upgradePrisma.$executeRawUnsafe(sql);
+    execSync(`pnpm prisma db execute --file "${migFile}" --url "${upgradeDbUrl}"`, {
+      encoding: "utf8",
+    });
 
     const checksum = crypto.createHash("sha256").update(fs.readFileSync(migFile)).digest("hex");
     const migId = crypto.randomUUID();
@@ -99,27 +101,36 @@ async function main() {
   await upgradePrisma.$executeRawUnsafe(`
     INSERT INTO schools (id, slug, name, updated_at)
     VALUES ('${sampleSchoolId}'::uuid, 'main-school', 'Main School', CURRENT_TIMESTAMP);
+  `);
 
+  await upgradePrisma.$executeRawUnsafe(`
     INSERT INTO users (id, school_id, email, first_name, last_name, password_hash, email_verified_at, updated_at)
     VALUES ('${sampleUserId}'::uuid, '${sampleSchoolId}'::uuid, 'main-user@example.com', 'Main', 'User', 'seeded_hash', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+  `);
 
+  await upgradePrisma.$executeRawUnsafe(`
     INSERT INTO sessions (id, school_id, user_id, refresh_token_hash, family_id, expires_at, created_at, updated_at)
     VALUES ('${sampleSessionId}'::uuid, '${sampleSchoolId}'::uuid, '${sampleUserId}'::uuid, 'seeded_refresh_hash', '${sampleFamilyId}'::uuid, CURRENT_TIMESTAMP + INTERVAL '7 days', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+  `);
 
+  await upgradePrisma.$executeRawUnsafe(`
     INSERT INTO password_reset_tokens (id, school_id, user_id, token_hash, expires_at, created_at)
     VALUES ('${sampleResetTokenId}'::uuid, '${sampleSchoolId}'::uuid, '${sampleUserId}'::uuid, 'seeded_reset_hash', CURRENT_TIMESTAMP + INTERVAL '1 hour', CURRENT_TIMESTAMP);
+  `);
 
+  await upgradePrisma.$executeRawUnsafe(`
     INSERT INTO email_verification_tokens (id, school_id, user_id, token_hash, expires_at, created_at)
     VALUES ('${sampleVerifyTokenId}'::uuid, '${sampleSchoolId}'::uuid, '${sampleUserId}'::uuid, 'seeded_verify_hash', CURRENT_TIMESTAMP + INTERVAL '24 hours', CURRENT_TIMESTAMP);
   `);
+
   console.log("Real main schema (migrations 1-6) applied and sample tenant data seeded.");
 
   console.log("Running prisma migrate deploy on upgraded database...");
   const upgradeDeployOutput = execSync("pnpm prisma migrate deploy", {
     env: {
       ...process.env,
-      DATABASE_URL: `${dbUrlBase}/test_ci_upgrade`,
-      DIRECT_URL: `${dbUrlBase}/test_ci_upgrade`,
+      DATABASE_URL: upgradeDbUrl,
+      DIRECT_URL: upgradeDbUrl,
     },
     encoding: "utf8",
   });
