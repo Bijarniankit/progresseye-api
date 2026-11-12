@@ -425,54 +425,38 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
       // 2. SELECT must fail with 42501 (permission denied)
       await expect(
         prisma.$transaction(async (tx) => {
-          await tx.$executeRawUnsafe(`SET ROLE progresseye_app;`);
-          try {
-            await tx.$executeRawUnsafe(
-              `SELECT * FROM "platform_audit_logs" WHERE id = '${dummyLogId}'::uuid;`,
-            );
-          } finally {
-            await tx.$executeRawUnsafe(`RESET ROLE;`);
-          }
+          await tx.$executeRawUnsafe(`SET LOCAL ROLE progresseye_app;`);
+          await tx.$executeRawUnsafe(
+            `SELECT * FROM "platform_audit_logs" WHERE id = '${dummyLogId}'::uuid;`,
+          );
         }),
       ).rejects.toThrow(/permission denied/i);
 
       // 3. UPDATE must fail with 42501
       await expect(
         prisma.$transaction(async (tx) => {
-          await tx.$executeRawUnsafe(`SET ROLE progresseye_app;`);
-          try {
-            await tx.$executeRawUnsafe(
-              `UPDATE "platform_audit_logs" SET action = 'MODIFIED' WHERE id = '${dummyLogId}'::uuid;`,
-            );
-          } finally {
-            await tx.$executeRawUnsafe(`RESET ROLE;`);
-          }
+          await tx.$executeRawUnsafe(`SET LOCAL ROLE progresseye_app;`);
+          await tx.$executeRawUnsafe(
+            `UPDATE "platform_audit_logs" SET action = 'MODIFIED' WHERE id = '${dummyLogId}'::uuid;`,
+          );
         }),
       ).rejects.toThrow(/permission denied/i);
 
       // 4. DELETE must fail with 42501
       await expect(
         prisma.$transaction(async (tx) => {
-          await tx.$executeRawUnsafe(`SET ROLE progresseye_app;`);
-          try {
-            await tx.$executeRawUnsafe(
-              `DELETE FROM "platform_audit_logs" WHERE id = '${dummyLogId}'::uuid;`,
-            );
-          } finally {
-            await tx.$executeRawUnsafe(`RESET ROLE;`);
-          }
+          await tx.$executeRawUnsafe(`SET LOCAL ROLE progresseye_app;`);
+          await tx.$executeRawUnsafe(
+            `DELETE FROM "platform_audit_logs" WHERE id = '${dummyLogId}'::uuid;`,
+          );
         }),
       ).rejects.toThrow(/permission denied/i);
 
       // 5. TRUNCATE must fail with 42501
       await expect(
         prisma.$transaction(async (tx) => {
-          await tx.$executeRawUnsafe(`SET ROLE progresseye_app;`);
-          try {
-            await tx.$executeRawUnsafe(`TRUNCATE TABLE "platform_audit_logs";`);
-          } finally {
-            await tx.$executeRawUnsafe(`RESET ROLE;`);
-          }
+          await tx.$executeRawUnsafe(`SET LOCAL ROLE progresseye_app;`);
+          await tx.$executeRawUnsafe(`TRUNCATE TABLE "platform_audit_logs";`);
         }),
       ).rejects.toThrow(/permission denied/i);
     });

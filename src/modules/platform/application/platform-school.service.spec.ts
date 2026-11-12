@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
+import { TenantContextService } from "../../../common/request-context/tenant-context.service";
 import { AppConfigService } from "../../../config/config.service";
 import { PrismaService } from "../../../infra/prisma/prisma.service";
 import { RoleService } from "../../identity/application/role.service";
@@ -38,6 +39,7 @@ describe("PlatformSchoolService", () => {
         { provide: RoleService, useValue: mockRoleService },
         { provide: PlatformAuditService, useValue: mockPlatformAudit },
         { provide: AppConfigService, useValue: mockConfig },
+        { provide: TenantContextService, useValue: { run: jest.fn((_, fn) => fn()) } },
       ],
     }).compile();
 

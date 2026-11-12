@@ -7,6 +7,7 @@ import {
   Post,
   Req,
   UseGuards,
+  UseInterceptors,
 } from "@nestjs/common";
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from "@nestjs/swagger";
 import type { FastifyRequest } from "fastify";
@@ -14,6 +15,7 @@ import { RequirePermission } from "../../../common/decorators/require-permission
 import { PoliciesGuard } from "../../../common/guards/policies.guard";
 import { ZodValidationPipe } from "../../../common/pipes/zod-validation.pipe";
 import { JwtAuthGuard } from "../../identity/http/guards/jwt-auth.guard";
+import { TenantContextInterceptor } from "../../identity/http/interceptors/tenant-context.interceptor";
 import { PlatformSchoolService } from "../application/platform-school.service";
 import { type CreateSchoolDto, CreateSchoolSchema } from "../dto/platform-school.dto";
 import { PlatformGuard } from "../guards/platform.guard";
@@ -30,6 +32,7 @@ interface AuthenticatedPlatformRequest extends FastifyRequest {
 @ApiTags("Platform School Provisioning")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, PlatformGuard, PoliciesGuard)
+@UseInterceptors(TenantContextInterceptor)
 @Controller("platform/schools")
 export class PlatformSchoolController {
   constructor(private readonly platformSchoolService: PlatformSchoolService) {}
