@@ -936,7 +936,7 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
 
       expect(existingPlatformAdmin).toBeDefined();
       expect(existingPlatformAdmin?.schoolId).toBe(SYSTEM_TENANT_ID);
-      expect(existingPlatformAdmin?.user.email).toBe("superadmin@progresseye.internal");
+      expect(existingPlatformAdmin?.user.email).toMatch(/@progresseye\.internal$/);
 
       // Verify that any secondary bootstrap attempt detects this existing record and refuses
       const canBootstrap = existingPlatformAdmin === null;

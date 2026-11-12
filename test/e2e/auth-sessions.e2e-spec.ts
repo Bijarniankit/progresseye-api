@@ -2167,10 +2167,12 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
     it("POST /api/v1/auth/logout: terminates session via refresh token and clears cookie", async () => {
       const loginRes = await request(app.getHttpServer())
         .post("/api/v1/auth/login")
+        .set("X-Forwarded-For", "198.51.100.121")
         .send({
           schoolSlug: "greenwood",
           email: "alice@greenwood.com",
           password: rawPassword,
+          clientType: "web",
         })
         .expect(200);
 
@@ -2209,7 +2211,7 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
         })
         .expect(200);
 
-      expect(res.body.message).toContain("If an account exists");
+      expect(res.body.message).toContain("If an account matches that email");
     });
 
     it("POST /api/v1/auth/sms/send-otp: initiates SMS OTP challenge verification stub", async () => {
@@ -2236,7 +2238,7 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
         })
         .expect(200);
 
-      expect(res.body.message).toContain("If an account exists");
+      expect(res.body.message).toContain("If an account matches that email");
     });
 
     it("POST /api/v1/auth/reset-password: consumes reset token or rejects invalid token cleanly", async () => {
@@ -2250,7 +2252,7 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
         .expect(400);
 
       expect(res.body.detail ?? res.body.message).toMatch(
-        /Invalid or expired password reset token|Invalid token format/i,
+        /Invalid or expired token/i,
       );
     });
   });
