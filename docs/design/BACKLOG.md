@@ -112,6 +112,14 @@ Deferred maintenance chores and dependency upgrades scheduled for execution at t
   - Wrap cache eviction failures or catch `RedisUnavailableException` / cache errors in the mutation flow and map them to HTTP 503 `ServiceUnavailableException` with an explicit problem detail error code (e.g. `SERVICE_UNAVAILABLE` / `CACHE_EVICTION_FAILED`).
   - Provide a clear message to clients indicating that upstream caching infrastructure is temporarily unavailable and that the mutation was aborted safely without modifying database state.
 
+### 19. Platform Audit-Log Viewer Service & Read-Only Connection (Phase 14)
+- **Context**: In Phase 13b-1, `platform_audit_logs` is provisioned as a global append-only sink where the operational database role `progresseye_app` has `GRANT INSERT` only and explicit `REVOKE SELECT, UPDATE, DELETE, TRUNCATE`. This prevents tampering and compromises of application workers from reading or modifying the platform audit trail.
+- **Checklist Item**:
+  - Implement a dedicated platform audit-log reader service in Phase 14 that connects via a read-only database credential (`progresseye_ro` or elevated administrative connection).
+  - Provide a paginated, filterable endpoint (`GET /api/v1/platform/audit-logs`) protected by `PlatformGuard` and requiring `platform.audit.read` permission.
+  - Implement field-level masking and temporal range filtering to support institutional security audits and regulatory compliance.
+
+
 
 
 

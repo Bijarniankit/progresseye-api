@@ -299,18 +299,23 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
       const hasPlatformAdmin = seededRoles.some((r) => r.slug === "platform_admin");
       expect(hasPlatformAdmin).toBe(false);
 
-      // Verify platform audit log entries exist
+      // Verify platform audit log entries exist with real actor_user_id and HMAC client_ip_hash
       const auditInit = await prisma.$queryRaw<any[]>`
         SELECT * FROM platform_audit_logs
         WHERE action = 'PLATFORM_SCHOOL_PROVISION_INIT' AND resource_id = ${newSchoolId}
       `;
       expect(auditInit.length).toBeGreaterThan(0);
+      expect(auditInit[0].actor_user_id).toBe(platformAdminUserId);
+      expect(typeof auditInit[0].client_ip_hash).toBe("string");
+      expect(auditInit[0].client_ip_hash.length).toBe(64);
 
       const auditComplete = await prisma.$queryRaw<any[]>`
         SELECT * FROM platform_audit_logs
         WHERE action = 'PLATFORM_SCHOOL_PROVISION_COMPLETE' AND resource_id = ${newSchoolId}
       `;
       expect(auditComplete.length).toBeGreaterThan(0);
+      expect(auditComplete[0].actor_user_id).toBe(platformAdminUserId);
+      expect(auditComplete[0].client_ip_hash).toBe(auditInit[0].client_ip_hash);
     });
 
     it("should reject duplicate school slug with 409 Conflict", async () => {
@@ -327,6 +332,19 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
   });
 
   describe("POST /api/v1/platform/schools/:id/reseed-roles", () => {
+    it("should reject tenant admin request with 403 Forbidden (platform scope required)", async () => {
+      if (!dbAvailable) return;
+
+      const res = await request(app.getHttpServer())
+        .post(`/api/v1/platform/schools/${existingSchoolId}/reseed-roles`)
+        .set("Authorization", `Bearer ${tenantAdminToken}`);
+
+      expect(res.status).toBe(403);
+      expect(res.body.message ?? res.body.detail).toMatch(
+        /Platform administrative access required/,
+      );
+    });
+
     it("should reseed roles for provisioned school and log PLATFORM_SCHOOL_RESEED_ROLES", async () => {
       if (!dbAvailable) return;
 
@@ -460,6 +478,23 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
         }),
       ).rejects.toThrow(/permission denied/i);
     });
+
+    it("should verify information_schema.role_table_grants has only INSERT for progresseye_app on platform_audit_logs", async () => {
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI for grants testing");
+        return;
+      }
+
+      const grants = await prisma.$queryRaw<Array<{ privilege_type: string }>>`
+        SELECT privilege_type
+        FROM information_schema.role_table_grants
+        WHERE table_name = 'platform_audit_logs'
+          AND grantee = 'progresseye_app'
+        ORDER BY privilege_type ASC;
+      `;
+
+      expect(grants.map((g) => g.privilege_type)).toEqual(["INSERT"]);
+    });
   });
 
   describe("withPlatformTenant contract and cross-tenant execution", () => {
@@ -526,6 +561,63 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
               return true;
             }),
           ).rejects.toThrow(/Cross-tenant execution forbidden/i);
+        },
+      );
+    });
+
+    it("should reject withTenant when target school differs from request tenant even under platform scope", async () => {
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
+
+      const tenantContextService = app.get(TenantContextService);
+      await tenantContextService.run(
+        { schoolId: SYSTEM_TENANT_ID, userId: platformAdminUserId, isPlatform: true },
+        async () => {
+          await expect(
+            prisma.withTenant(existingSchoolId, async () => {
+              return true;
+            }),
+          ).rejects.toThrow(/Cross-tenant execution forbidden/i);
+        },
+      );
+    });
+
+    it("should roll back operation if platform audit log insertion fails in withPlatformTenant", async () => {
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
+
+      const tenantContextService = app.get(TenantContextService);
+      const testRoleId = uuidv7();
+
+      // Passing non-UUID string as userId causes PostgreSQL to reject INSERT into platform_audit_logs.actor_user_id (UUID column)
+      // inside withPlatformTenant's single transaction, guaranteeing full rollback of fn(tx).
+      await tenantContextService.run(
+        { schoolId: SYSTEM_TENANT_ID, userId: "not-a-valid-uuid", isPlatform: true },
+        async () => {
+          await expect(
+            prisma.withPlatformTenant(existingSchoolId, async (tx: any) => {
+              await tx.role.create({
+                data: {
+                  id: testRoleId,
+                  schoolId: existingSchoolId,
+                  name: "Rollback Test Role",
+                  slug: `rollback_role_${Date.now()}`,
+                  description: "Should be rolled back",
+                  isSystem: false,
+                },
+              });
+            }),
+          ).rejects.toThrow(/invalid input syntax for type uuid/i);
+
+          // Assert the role was rolled back and does not exist in DB
+          const roleInDb = await prisma.role.findUnique({
+            where: { id: testRoleId },
+          });
+          expect(roleInDb).toBeNull();
         },
       );
     });
@@ -682,26 +774,135 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
       expect(output).toMatch(/at least 32 characters/i);
     });
 
-    it("should refuse second run when platform administrator already exists", () => {
+    it("should run real bootstrap script on empty system tenant, asserting admin with isTwoFactorEnabled=false, mustChangePassword=true, audit row, single password output, and refusal on second run", async () => {
+      if (process.env.CI && !dbAvailable) {
+        throw new Error("Database is required in CI for bootstrap testing");
+      }
       if (!dbAvailable) return;
-      let failed = false;
-      let output = "";
+
+      // 1. Clear platform admin users from system tenant under FORCE RLS
+      await prisma.$executeRaw`SELECT set_config('app.current_school_id', ${SYSTEM_TENANT_ID}, true)`;
+      await prisma.userRole.deleteMany({
+        where: { schoolId: SYSTEM_TENANT_ID },
+      });
+      await prisma.session.deleteMany({
+        where: { schoolId: SYSTEM_TENANT_ID },
+      });
+      await prisma.user.deleteMany({
+        where: { schoolId: SYSTEM_TENANT_ID },
+      });
+
+      const secret = "a-very-long-secret-key-that-is-at-least-32-chars-long";
+      const bootstrapEmail = `bootstrap-${Date.now()}@progresseye.internal`;
+
       try {
-        output = execSync("pnpm exec ts-node scripts/bootstrap-platform-admin.ts", {
+        // 2. Execute bootstrap script via ts-node
+        const stdout1 = execSync("pnpm exec ts-node scripts/bootstrap-platform-admin.ts", {
           env: {
             ...process.env,
             NODE_ENV: "development",
             ENABLE_PLATFORM_BOOTSTRAP: "true",
-            PLATFORM_BOOTSTRAP_SECRET: "a-very-long-secret-key-that-is-at-least-32-chars-long",
+            PLATFORM_BOOTSTRAP_SECRET: secret,
+            PLATFORM_ADMIN_EMAIL: bootstrapEmail,
           },
           stdio: "pipe",
         }).toString();
-      } catch (err: any) {
-        failed = true;
-        output = err.stderr ? err.stderr.toString() : err.stdout.toString();
+
+        expect(stdout1).toContain("PLATFORM ADMINISTRATOR BOOTSTRAPPED SUCCESSFULLY");
+        expect(stdout1).toContain(bootstrapEmail);
+
+        // 3. Verify user in database: isTwoFactorEnabled=false, mustChangePassword=true
+        const bootstrappedUser = await prisma.user.findFirst({
+          where: { schoolId: SYSTEM_TENANT_ID, email: bootstrapEmail },
+        });
+        expect(bootstrappedUser).toBeDefined();
+        expect(bootstrappedUser?.isTwoFactorEnabled).toBe(false);
+        expect(bootstrappedUser?.mustChangePassword).toBe(true);
+        expect(bootstrappedUser?.isActive).toBe(true);
+
+        // Verify PLATFORM_ADMIN_BOOTSTRAP audit row exists
+        const auditRows = await prisma.$queryRaw<any[]>`
+          SELECT * FROM platform_audit_logs
+          WHERE action = 'PLATFORM_ADMIN_BOOTSTRAP' AND resource_id = ${bootstrappedUser!.id};
+        `;
+        expect(auditRows.length).toBe(1);
+
+        // 4. Verify one-time password appears only once on stdout and never in audit payload
+        const match = stdout1.match(/One-Time Password:\s*(\S+)/);
+        expect(match).not.toBeNull();
+        const oneTimePassword = match ? match[1]! : "";
+        expect(oneTimePassword.startsWith("Pe!")).toBe(true);
+
+        // Count occurrences of password in stdout: exactly 1
+        const passwordMatches = stdout1.split(oneTimePassword).length - 1;
+        expect(passwordMatches).toBe(1);
+
+        // Assert one-time password NEVER appears in audit log payload
+        const auditPayloadStr = JSON.stringify(auditRows[0].payload);
+        expect(auditPayloadStr).not.toContain(oneTimePassword);
+        expect(auditPayloadStr.toLowerCase()).not.toContain("password");
+
+        // 5. Run a second time in the same test: must see refusal
+        let secondRunFailed = false;
+        let secondRunOutput = "";
+        try {
+          secondRunOutput = execSync("pnpm exec ts-node scripts/bootstrap-platform-admin.ts", {
+            env: {
+              ...process.env,
+              NODE_ENV: "development",
+              ENABLE_PLATFORM_BOOTSTRAP: "true",
+              PLATFORM_BOOTSTRAP_SECRET: secret,
+              PLATFORM_ADMIN_EMAIL: bootstrapEmail,
+            },
+            stdio: "pipe",
+          }).toString();
+        } catch (err: any) {
+          secondRunFailed = true;
+          secondRunOutput =
+            (err.stderr ? err.stderr.toString() : "") + (err.stdout ? err.stdout.toString() : "");
+        }
+
+        expect(secondRunFailed).toBe(true);
+        expect(secondRunOutput).toMatch(
+          /Platform administrator already exists.*Bootstrap refused/i,
+        );
+      } finally {
+        // Restore platformAdminUserId in system tenant for subsequent test isolation
+        await prisma.user.upsert({
+          where: { id: platformAdminUserId },
+          update: { isActive: true, isTwoFactorEnabled: true },
+          create: {
+            id: platformAdminUserId,
+            schoolId: SYSTEM_TENANT_ID,
+            email: "superadmin@progresseye.internal",
+            passwordHash: "$argon2id$v=19$m=4096,t=2,p=1$7v1b8z5m/f4k2j9s$dummyhashvaluehere",
+            firstName: "Platform",
+            lastName: "SuperAdmin",
+            isActive: true,
+            isTwoFactorEnabled: true,
+          },
+        });
+        const platformAdminRole = await prisma.role.findFirst({
+          where: { schoolId: SYSTEM_TENANT_ID, slug: "platform_admin" },
+        });
+        if (platformAdminRole) {
+          await prisma.userRole.upsert({
+            where: {
+              schoolId_userId_roleId: {
+                schoolId: SYSTEM_TENANT_ID,
+                userId: platformAdminUserId,
+                roleId: platformAdminRole.id,
+              },
+            },
+            update: {},
+            create: {
+              schoolId: SYSTEM_TENANT_ID,
+              userId: platformAdminUserId,
+              roleId: platformAdminRole.id,
+            },
+          });
+        }
       }
-      expect(failed).toBe(true);
-      expect(output).toMatch(/Platform administrator already exists.*Bootstrap refused/i);
     });
 
     it("should confirm bootstrap audit log row never contains plaintext password", async () => {

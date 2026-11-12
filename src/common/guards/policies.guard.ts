@@ -51,7 +51,7 @@ export class PoliciesGuard implements CanActivate {
 
     if (isAuthenticated) {
       const request = context.switchToHttp().getRequest<RequestWithUser>();
-      if (!request.user || !request.user.userId || !request.user.schoolId) {
+      if (!request.user?.userId || !request.user?.schoolId) {
         throw new UnauthorizedException("Authentication required to access this resource");
       }
       return true;
@@ -69,7 +69,7 @@ export class PoliciesGuard implements CanActivate {
     }
 
     const request = context.switchToHttp().getRequest<RequestWithUser>();
-    if (!request.user || !request.user.userId || !request.user.schoolId) {
+    if (!request.user?.userId || !request.user?.schoolId) {
       throw new UnauthorizedException("Authentication required to evaluate authorization policy");
     }
 

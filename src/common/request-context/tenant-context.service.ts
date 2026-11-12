@@ -6,6 +6,7 @@ export interface TenantContext {
   userId?: string;
   requestId?: string;
   isPlatform?: boolean;
+  clientIpHash?: string;
 }
 
 export const NIL_UUID = "00000000-0000-0000-0000-000000000000";

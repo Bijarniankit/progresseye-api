@@ -58,7 +58,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     if (this.tenantContext) {
       this.tenantContext.validateTenantId(schoolId);
       const activeTenantId = this.tenantContext.getTenantId();
-      if (activeTenantId && activeTenantId !== schoolId && !this.tenantContext.isPlatformScope()) {
+      if (activeTenantId && activeTenantId !== schoolId) {
         throw new Error(
           `Cross-tenant execution forbidden: active request tenant ${activeTenantId} does not match target tenant ${schoolId}. Platform operations must use withPlatformTenant.`,
         );
@@ -73,13 +73,15 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   /**
    * Cross-tenant execution wrapper exclusively for platform operations.
    * Enforces that the execution holds active platform scope,
-   * sets the target tenant context, delegates to withTenant within a transaction,
-   * and writes a platform audit log entry.
-   * Closes BACKLOG item 8 for platform use as the sole authorized cross-tenant caller of withTenant.
+   * sets the target tenant context internally within a transaction,
+   * executes the operation, and writes an audit log entry in the same transaction.
+   * If the audit log insertion fails, the entire transaction rolls back.
+   * Closes BACKLOG item 8 as the sole authorized cross-tenant transaction manager.
    */
   async withPlatformTenant<T>(
     targetSchoolId: string,
     op: (tx: Prisma.TransactionClient) => Promise<T>,
+    options?: { operationName?: string; clientIpHash?: string },
   ): Promise<T> {
     if (this.tenantContext) {
       this.tenantContext.validateTenantId(targetSchoolId);
@@ -89,12 +91,19 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     }
 
     const store = this.tenantContext?.getContext();
-    const actorUserId = store?.userId || "00000000-0000-0000-0000-000000000000";
+    if (!store?.userId) {
+      throw new Error("Cross-tenant execution requires verified platform actor user ID.");
+    }
+    const actorUserId = store.userId;
+    const opName = options?.operationName || "PLATFORM_CROSS_TENANT_OPERATION";
+    const clientIpHash = options?.clientIpHash || (store as any)?.clientIpHash || "internal";
 
-    return this.withTenant(targetSchoolId, async (tx) => {
+    return this.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.current_school_id', ${targetSchoolId}, true)`;
       const result = await op(tx);
 
       // Write platform audit log entry (platform_audit_logs is append-only, progresseye_app has INSERT only)
+      // Must be in same transaction: if audit insertion fails, op(tx) rolls back
       await tx.$executeRaw`
         INSERT INTO "platform_audit_logs" (
           "id",
@@ -109,12 +118,12 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         ) VALUES (
           gen_random_uuid(),
           ${actorUserId}::uuid,
-          'PLATFORM_CROSS_TENANT_OPERATION',
+          ${opName},
           'school',
           ${targetSchoolId},
-          ${JSON.stringify({ action: "PLATFORM_CROSS_TENANT_OPERATION", targetSchoolId, actorUserId })}::jsonb,
-          COALESCE(current_setting('app.client_ip_hash', true), 'internal'),
-          COALESCE(current_setting('app.user_agent', true), 'internal-service'),
+          ${JSON.stringify({ operation: opName, targetSchoolId, actorUserId })}::jsonb,
+          ${clientIpHash},
+          COALESCE(NULLIF(current_setting('app.user_agent', true), ''), 'withPlatformTenant'),
           CURRENT_TIMESTAMP(3)
         )
       `;

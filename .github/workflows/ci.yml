@@ -74,6 +74,9 @@ jobs:
       - name: TypeScript Typecheck
         run: pnpm typecheck
 
+      - name: Print Discovered Routes Matrix
+        run: pnpm ts-node scripts/print-discovered-routes.ts
+
       - name: Unit Tests
         run: pnpm test
 

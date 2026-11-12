@@ -40,35 +40,43 @@ export class PlatformSchoolService {
     actorUserId: string,
     meta: { ip: string; userAgent?: string },
   ) {
+    const clientIpHmac = meta.ip ? hmacHash(meta.ip, this.hmacSecret) : "";
+    const userAgentVal = meta.userAgent || "";
+
     return this.tenantContext.run(
-      { schoolId: SYSTEM_TENANT_ID, userId: actorUserId, isPlatform: true },
+      {
+        schoolId: SYSTEM_TENANT_ID,
+        userId: actorUserId,
+        isPlatform: true,
+        clientIpHash: clientIpHmac,
+      },
       async () => {
-        let newSchoolId: string;
-        const clientIpHmac = meta.ip ? hmacHash(meta.ip, this.hmacSecret) : "";
-        const userAgentVal = meta.userAgent || "";
+        let newSchoolId = "";
 
         try {
-          await this.prisma.$executeRaw`
-            SELECT
-              set_config('app.current_user_id', ${actorUserId}, true),
-              set_config('app.client_ip_hash', ${clientIpHmac}, true),
-              set_config('app.user_agent', ${userAgentVal}, true)
-          `;
+          await this.prisma.$transaction(async (tx) => {
+            await tx.$executeRaw`
+              SELECT
+                set_config('app.current_user_id', ${actorUserId}, true),
+                set_config('app.client_ip_hash', ${clientIpHmac}, true),
+                set_config('app.user_agent', ${userAgentVal}, true)
+            `;
 
-          const rows = await this.prisma.$queryRaw<{ school_id: string }[]>`
-            SELECT platform_provision_school(
-              ${dto.slug},
-              ${dto.name},
-              ${dto.organizationId ? dto.organizationId : null}::uuid
-            ) AS school_id
-          `;
+            const rows = await tx.$queryRaw<{ school_id: string }[]>`
+              SELECT platform_provision_school(
+                ${dto.slug},
+                ${dto.name},
+                ${dto.organizationId ? dto.organizationId : null}::uuid
+              ) AS school_id
+            `;
 
-          const firstRow = rows && rows[0];
-          if (!firstRow || !firstRow.school_id) {
-            throw new Error("platform_provision_school did not return a valid school UUID.");
-          }
+            const firstRow = rows && rows[0];
+            if (!firstRow || !firstRow.school_id) {
+              throw new Error("platform_provision_school did not return a valid school UUID.");
+            }
 
-          newSchoolId = firstRow.school_id;
+            newSchoolId = firstRow.school_id;
+          });
         } catch (error: any) {
           const message = error?.message || String(error);
           if (message.includes("SLUG_ALREADY_EXISTS")) {
@@ -124,8 +132,15 @@ export class PlatformSchoolService {
     actorUserId: string,
     meta: { ip: string; userAgent?: string },
   ) {
+    const clientIpHmac = meta.ip ? hmacHash(meta.ip, this.hmacSecret) : "";
+
     return this.tenantContext.run(
-      { schoolId: SYSTEM_TENANT_ID, userId: actorUserId, isPlatform: true },
+      {
+        schoolId: SYSTEM_TENANT_ID,
+        userId: actorUserId,
+        isPlatform: true,
+        clientIpHash: clientIpHmac,
+      },
       async () => {
         const school = await this.prisma.school.findUnique({
           where: { id: schoolId },

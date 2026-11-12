@@ -34,6 +34,7 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
 
   let principalAToken: string;
   let teacherAToken: string;
+  let studentAToken: string;
   let principalBToken: string;
 
   const rawPassword = "Password12345!";
@@ -180,6 +181,16 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
         });
       }
 
+      // Assign built-in student role to studentA
+      const studentRoleA = await prisma.role.findFirst({
+        where: { schoolId: schoolAId, slug: "student" },
+      });
+      if (studentRoleA) {
+        await prisma.userRole.create({
+          data: { schoolId: schoolAId, userId: studentAId, roleId: studentRoleA.id },
+        });
+      }
+
       // Generate access tokens
       const sessA = await tokenService.createAccessToken({
         userId: principalAId,
@@ -194,6 +205,13 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
         sessionId: "sess-t-a",
       });
       teacherAToken = sessT.token;
+
+      const sessS = await tokenService.createAccessToken({
+        userId: studentAId,
+        schoolId: schoolAId,
+        sessionId: "sess-s-a",
+      });
+      studentAToken = sessS.token;
 
       const sessB = await tokenService.createAccessToken({
         userId: principalBId,
@@ -429,6 +447,181 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body.permissions)).toBe(true);
       expect(res.body.roles).toContain("student");
+    });
+  });
+
+  describe("RBAC Route Access Control Suite (Denied Role and Other-School)", () => {
+    let dummyRoleBId = "";
+
+    beforeAll(async () => {
+      if (!dbAvailable) return;
+      const roleB = await prisma.role.findFirst({
+        where: { schoolId: schoolBId, slug: "teacher" },
+      });
+      if (roleB) dummyRoleBId = roleB.id;
+    });
+
+    it("GET /api/v1/identity/permissions: denied to student without identity.role.read (403)", async () => {
+      if (!dbAvailable) return;
+      const res = await request(app.getHttpServer())
+        .get("/api/v1/identity/permissions")
+        .set("Authorization", `Bearer ${studentAToken}`);
+      expect(res.status).toBe(403);
+    });
+
+    it("GET /api/v1/identity/roles: denied to student without identity.role.read (403)", async () => {
+      if (!dbAvailable) return;
+      const res = await request(app.getHttpServer())
+        .get("/api/v1/identity/roles")
+        .set("Authorization", `Bearer ${studentAToken}`);
+      expect(res.status).toBe(403);
+    });
+
+    it("POST /api/v1/identity/roles: denied to student without identity.role.create (403)", async () => {
+      if (!dbAvailable) return;
+      const res = await request(app.getHttpServer())
+        .post("/api/v1/identity/roles")
+        .set("Authorization", `Bearer ${studentAToken}`)
+        .send({ name: "Student Custom Role", slug: "student-custom" });
+      expect(res.status).toBe(403);
+    });
+
+    it("GET /api/v1/identity/roles/:id: denied to student (403) and other-school returns 404", async () => {
+      if (!dbAvailable) return;
+      // Denied role
+      const principalRoleA = await prisma.role.findFirst({
+        where: { schoolId: schoolAId, slug: "principal" },
+      });
+      const deniedRes = await request(app.getHttpServer())
+        .get(`/api/v1/identity/roles/${principalRoleA!.id}`)
+        .set("Authorization", `Bearer ${studentAToken}`);
+      expect(deniedRes.status).toBe(403);
+
+      // Other school
+      const otherRes = await request(app.getHttpServer())
+        .get(`/api/v1/identity/roles/${dummyRoleBId}`)
+        .set("Authorization", `Bearer ${principalAToken}`);
+      expect(otherRes.status).toBe(404);
+    });
+
+    it("PUT /api/v1/identity/roles/:id: denied to student (403) and other-school returns 404", async () => {
+      if (!dbAvailable) return;
+      // Denied role
+      const deniedRes = await request(app.getHttpServer())
+        .put(`/api/v1/identity/roles/${dummyRoleBId}`)
+        .set("Authorization", `Bearer ${studentAToken}`)
+        .send({ name: "Hacked" });
+      expect(deniedRes.status).toBe(403);
+
+      // Other school
+      const otherRes = await request(app.getHttpServer())
+        .put(`/api/v1/identity/roles/${dummyRoleBId}`)
+        .set("Authorization", `Bearer ${principalAToken}`)
+        .send({ name: "Hacked" });
+      expect(otherRes.status).toBe(404);
+    });
+
+    it("DELETE /api/v1/identity/roles/:id: denied to student (403) and other-school returns 404", async () => {
+      if (!dbAvailable) return;
+      // Denied role
+      const deniedRes = await request(app.getHttpServer())
+        .delete(`/api/v1/identity/roles/${dummyRoleBId}`)
+        .set("Authorization", `Bearer ${studentAToken}`);
+      expect(deniedRes.status).toBe(403);
+
+      // Other school
+      const otherRes = await request(app.getHttpServer())
+        .delete(`/api/v1/identity/roles/${dummyRoleBId}`)
+        .set("Authorization", `Bearer ${principalAToken}`);
+      expect(otherRes.status).toBe(404);
+    });
+
+    it("POST /api/v1/identity/roles/:id/clone: denied to student (403) and other-school returns 404", async () => {
+      if (!dbAvailable) return;
+      // Denied role
+      const deniedRes = await request(app.getHttpServer())
+        .post(`/api/v1/identity/roles/${dummyRoleBId}/clone`)
+        .set("Authorization", `Bearer ${studentAToken}`)
+        .send({ name: "Clone", slug: "clone-slug" });
+      expect(deniedRes.status).toBe(403);
+
+      // Other school
+      const otherRes = await request(app.getHttpServer())
+        .post(`/api/v1/identity/roles/${dummyRoleBId}/clone`)
+        .set("Authorization", `Bearer ${principalAToken}`)
+        .send({ name: "Clone", slug: "clone-slug" });
+      expect(otherRes.status).toBe(404);
+    });
+
+    it("POST /api/v1/identity/roles/assign: denied to student (403) and other-school role/user returns 404", async () => {
+      if (!dbAvailable) return;
+      // Denied role
+      const deniedRes = await request(app.getHttpServer())
+        .post("/api/v1/identity/roles/assign")
+        .set("Authorization", `Bearer ${studentAToken}`)
+        .send({ userId: teacherAId, roleId: dummyRoleBId });
+      expect(deniedRes.status).toBe(403);
+
+      // Other school role
+      const otherRes = await request(app.getHttpServer())
+        .post("/api/v1/identity/roles/assign")
+        .set("Authorization", `Bearer ${principalAToken}`)
+        .send({ userId: teacherAId, roleId: dummyRoleBId });
+      expect(otherRes.status).toBe(404);
+    });
+
+    it("POST /api/v1/identity/roles/unassign: denied to student (403) and other-school role returns 404", async () => {
+      if (!dbAvailable) return;
+      // Denied role
+      const deniedRes = await request(app.getHttpServer())
+        .post("/api/v1/identity/roles/unassign")
+        .set("Authorization", `Bearer ${studentAToken}`)
+        .send({ userId: teacherAId, roleId: dummyRoleBId });
+      expect(deniedRes.status).toBe(403);
+
+      // Other school role
+      const otherRes = await request(app.getHttpServer())
+        .post("/api/v1/identity/roles/unassign")
+        .set("Authorization", `Bearer ${principalAToken}`)
+        .send({ userId: teacherAId, roleId: dummyRoleBId });
+      expect(otherRes.status).toBe(404);
+    });
+
+    it("POST /api/v1/identity/users/:id/deactivate: allowed for principal, denied to student (403), and other-school user returns 404", async () => {
+      if (!dbAvailable) return;
+
+      // 1. Denied to student (403)
+      const deniedRes = await request(app.getHttpServer())
+        .post(`/api/v1/identity/users/${teacherAId}/deactivate`)
+        .set("Authorization", `Bearer ${studentAToken}`);
+      expect(deniedRes.status).toBe(403);
+
+      // 2. Cross-tenant: School A principal cannot deactivate School B user (404)
+      const otherRes = await request(app.getHttpServer())
+        .post(`/api/v1/identity/users/${principalBId}/deactivate`)
+        .set("Authorization", `Bearer ${principalAToken}`);
+      expect(otherRes.status).toBe(404);
+
+      // 3. Allowed: School A principal can deactivate a non-admin user in School A
+      const tempUser = await prisma.user.create({
+        data: {
+          id: uuidv7(),
+          schoolId: schoolAId,
+          email: `deact-${Date.now()}@alpha.com`,
+          firstName: "Deact",
+          lastName: "Target",
+          isActive: true,
+        },
+      });
+
+      const allowedRes = await request(app.getHttpServer())
+        .post(`/api/v1/identity/users/${tempUser.id}/deactivate`)
+        .set("Authorization", `Bearer ${principalAToken}`);
+      expect(allowedRes.status).toBe(200);
+      expect(allowedRes.body.success).toBe(true);
+
+      const updatedUser = await prisma.user.findUnique({ where: { id: tempUser.id } });
+      expect(updatedUser?.isActive).toBe(false);
     });
   });
 

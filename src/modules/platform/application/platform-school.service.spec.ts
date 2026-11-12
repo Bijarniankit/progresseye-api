@@ -16,6 +16,7 @@ describe("PlatformSchoolService", () => {
 
   beforeEach(async () => {
     mockPrisma = {
+      $transaction: jest.fn(async (callback: any) => callback(mockPrisma)),
       $executeRaw: jest.fn().mockResolvedValue(1),
       $queryRaw: jest.fn(),
       school: {

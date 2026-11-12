@@ -2162,4 +2162,94 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
       });
     }
   });
+
+  describe("Dedicated Route Coverage Tests", () => {
+    it("POST /api/v1/auth/logout: terminates session via refresh token and clears cookie", async () => {
+      const loginRes = await request(app.getHttpServer())
+        .post("/api/v1/auth/login")
+        .send({
+          schoolSlug: "greenwood",
+          email: "alice@greenwood.com",
+          password: "Password123!",
+        })
+        .expect(200);
+
+      const cookie = loginRes.headers["set-cookie"]?.[0]?.split(";")[0] || "";
+      expect(cookie).toContain("pe_refresh_token=");
+
+      const logoutRes = await request(app.getHttpServer())
+        .post("/api/v1/auth/logout")
+        .set("Cookie", [cookie])
+        .send({})
+        .expect(200);
+
+      expect(logoutRes.body.success).toBe(true);
+      expect(logoutRes.body.message).toContain("Successfully logged out");
+      const clearCookie = logoutRes.headers["set-cookie"]?.[0] || "";
+      expect(clearCookie).toMatch(/pe_refresh_token=;|Max-Age=0/i);
+    });
+
+    it("POST /api/v1/auth/password-strength: evaluates password strength and returns score", async () => {
+      const res = await request(app.getHttpServer())
+        .post("/api/v1/auth/password-strength")
+        .send({ password: "CorrectHorseBatteryStaple123!" })
+        .expect(200);
+
+      expect(typeof res.body.score).toBe("number");
+      expect(res.body.score).toBeGreaterThanOrEqual(3);
+      expect(res.body.isAcceptable).toBe(true);
+    });
+
+    it("POST /api/v1/auth/verify-email/resend: returns generic success message without leaking account presence", async () => {
+      const res = await request(app.getHttpServer())
+        .post("/api/v1/auth/verify-email/resend")
+        .send({
+          schoolSlug: "greenwood",
+          email: "alice@greenwood.com",
+        })
+        .expect(200);
+
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toContain("If an account exists");
+    });
+
+    it("POST /api/v1/auth/sms/send-otp: initiates SMS OTP challenge verification stub", async () => {
+      const res = await request(app.getHttpServer())
+        .post("/api/v1/auth/sms/send-otp")
+        .send({
+          schoolSlug: "greenwood",
+          email: "carol@greenwood.com",
+          phoneNumber: "+1-555-999-0000",
+        })
+        .expect(200);
+
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toContain("eligible for SMS verification");
+    });
+
+    it("POST /api/v1/auth/forgot-password: initiates password reset without leaking account presence", async () => {
+      const res = await request(app.getHttpServer())
+        .post("/api/v1/auth/forgot-password")
+        .send({
+          schoolSlug: "greenwood",
+          email: "alice@greenwood.com",
+        })
+        .expect(200);
+
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toContain("If an account exists");
+    });
+
+    it("POST /api/v1/auth/reset-password: consumes reset token or rejects invalid token cleanly", async () => {
+      const res = await request(app.getHttpServer())
+        .post("/api/v1/auth/reset-password")
+        .send({
+          token: "invalid.token",
+          newPassword: "NewAlicePassword123!",
+        })
+        .expect(400);
+
+      expect(res.body.message).toContain("Invalid or expired password reset token");
+    });
+  });
 });

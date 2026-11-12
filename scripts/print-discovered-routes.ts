@@ -39,7 +39,7 @@ async function run() {
         ["GET", "POST", "PUT", "DELETE", "PATCH", "ALL", "OPTIONS", "HEAD"][httpCode] || "UNKNOWN";
       const cleanBasePath = Array.isArray(controllerPath) ? controllerPath[0] : controllerPath;
       const cleanMethodPath = Array.isArray(methodPath) ? methodPath[0] : methodPath;
-      const full = ("/api/v1/" + cleanBasePath + "/" + cleanMethodPath)
+      const full = `/api/v1/${cleanBasePath}/${cleanMethodPath}`
         .replace(/\/+/g, "/")
         .replace(/\/$/, "");
 
@@ -50,9 +50,18 @@ async function run() {
       const authJust = reflector.get(AUTHENTICATED_JUSTIFICATION_KEY, handler);
 
       let type = "UNKNOWN";
-      if (reqPerm) type = "RBAC: " + reqPerm.join(",");
-      else if (isAuth) type = "AUTH: " + authJust;
-      else if (isPub) type = "PUBLIC: " + pubJust;
+      if (reqPerm) {
+        const permCodes = Array.isArray(reqPerm)
+          ? reqPerm
+              .map((p) => (typeof p === "object" && p && "code" in p ? p.code : String(p)))
+              .join(",")
+          : String(reqPerm);
+        type = `RBAC: ${permCodes}`;
+      } else if (isAuth) {
+        type = `AUTH: ${authJust}`;
+      } else if (isPub) {
+        type = `PUBLIC: ${pubJust}`;
+      }
 
       results.push({ httpMethod, full, handler: `${c.metatype.name}.${m}`, type });
     }
