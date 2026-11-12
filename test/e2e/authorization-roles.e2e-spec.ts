@@ -414,35 +414,9 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
     it("GET /api/v1/identity/users/me/effective-permissions: accessible to student without role-management permissions (@Authenticated)", async () => {
       if (!dbAvailable) return;
 
-      // Assign student role to studentA
-      const studentRole = await prisma.role.findFirst({
-        where: { schoolId: schoolAId, slug: "student" },
-      });
-      if (studentRole) {
-        await prisma.userRole.create({
-          data: { schoolId: schoolAId, userId: studentAId, roleId: studentRole.id },
-        });
-      }
-
-      const studentSession = await prisma.session.create({
-        data: {
-          schoolId: schoolAId,
-          userId: studentAId,
-          tokenHash: "student-sess-hash",
-          clientType: "web",
-          expiresAt: new Date(Date.now() + 3600000),
-        },
-      });
-
-      const { token: studentToken } = await tokenService.createAccessToken({
-        userId: studentAId,
-        schoolId: schoolAId,
-        sessionId: studentSession.id,
-      });
-
       const res = await request(app.getHttpServer())
         .get("/api/v1/identity/users/me/effective-permissions")
-        .set("Authorization", `Bearer ${studentToken}`);
+        .set("Authorization", `Bearer ${studentAToken}`);
 
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body.permissions)).toBe(true);
