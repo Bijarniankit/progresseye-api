@@ -124,6 +124,9 @@ The application enforces strict PostgreSQL Row-Level Security (`progresseye_app`
   - Input validation sanitizes slugs and names. Checks against reserved system slugs (`'system-platform'`, `'platform'`, `'admin'`, `'api'`, `'app'`, `'public'`, `'system'`, `'root'`, `'support'`, `'billing'`).
   - Writes an initial audit row inside the same database transaction.
   - Gated at the application layer by `PlatformGuard` + `@RequirePermission('create', 'platform.school')`.
+  - **Uncached Live PlatformGuard Verification**:
+    - `PlatformGuard` executes a direct database query under `SYSTEM_TENANT_ID` on every incoming request without Redis caching.
+    - Zero caching eliminates cache invalidation latency and state drift, guaranteeing that administrator deactivation (`isActive: false`), role revocation (removal of `platform_admin`), or session invalidation (`revokedAt != null`) takes effect instantaneously on the very next HTTP request.
   - **Risk Assessment**: `progresseye_app` has `EXECUTE` privilege on this function, meaning if SQL injection were present in the application, an attacker could provision schools. This risk is mitigated by parameterized queries, strict input validation, slug regex `^[a-z0-9]+(-[a-z0-9]+)*$`, and application-level role checks. The function cannot read or modify any other tenant's data beyond creating the new tenant root.
 - **Role Seeding and Cross-Tenant Execution (`withPlatformTenant`)**:
   - Once `platform_provision_school` creates the school row, role seeding executes via `withPlatformTenant(targetSchoolId, actorUserId, action, op)`.

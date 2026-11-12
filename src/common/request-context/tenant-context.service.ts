@@ -69,7 +69,7 @@ export class TenantContextService {
    */
   isPlatformScope(): boolean {
     const store = this.storage.getStore();
-    return store?.isPlatform === true || store?.schoolId === SYSTEM_TENANT_ID;
+    return store?.isPlatform === true;
   }
 
   /**

@@ -5,18 +5,8 @@ import { PlatformGuard } from "./platform.guard";
 describe("PlatformGuard", () => {
   let guard: PlatformGuard;
   let mockPrisma: any;
-  let mockRedisService: any;
-  let mockRedisClient: any;
 
   beforeEach(() => {
-    mockRedisClient = {
-      status: "ready",
-      get: jest.fn().mockResolvedValue(null),
-      set: jest.fn().mockResolvedValue("OK"),
-    };
-    mockRedisService = {
-      getClient: jest.fn().mockReturnValue(mockRedisClient),
-    };
     mockPrisma = {
       withTenant: jest.fn().mockImplementation((_, fn) =>
         fn({
@@ -34,7 +24,7 @@ describe("PlatformGuard", () => {
       ),
     };
 
-    guard = new PlatformGuard(mockPrisma, mockRedisService);
+    guard = new PlatformGuard(mockPrisma);
   });
 
   const createMockContext = (user?: any): ExecutionContext => {
@@ -79,15 +69,10 @@ describe("PlatformGuard", () => {
     });
     const result = await guard.canActivate(ctx);
     expect(result).toBe(true);
-    expect(mockRedisClient.set).toHaveBeenCalledWith(
-      expect.stringContaining("platform:guard:"),
-      "1",
-      "EX",
-      30,
-    );
+    expect(mockPrisma.withTenant).toHaveBeenCalledWith(SYSTEM_TENANT_ID, expect.any(Function));
   });
 
-  it("should reject with UnauthorizedException if platform admin is deactivated", async () => {
+  it("should reject with UnauthorizedException immediately if platform admin is deactivated", async () => {
     mockPrisma.withTenant.mockImplementationOnce((_: any, fn: any) =>
       fn({
         user: {
@@ -112,7 +97,7 @@ describe("PlatformGuard", () => {
     await expect(guard.canActivate(ctx)).rejects.toThrow(UnauthorizedException);
   });
 
-  it("should reject with ForbiddenException if platform_admin role was removed", async () => {
+  it("should reject with ForbiddenException immediately if platform_admin role was removed", async () => {
     mockPrisma.withTenant.mockImplementationOnce((_: any, fn: any) =>
       fn({
         user: {
@@ -137,7 +122,7 @@ describe("PlatformGuard", () => {
     await expect(guard.canActivate(ctx)).rejects.toThrow(ForbiddenException);
   });
 
-  it("should reject with UnauthorizedException if platform session was revoked", async () => {
+  it("should reject with UnauthorizedException immediately if platform session was revoked", async () => {
     mockPrisma.withTenant.mockImplementationOnce((_: any, fn: any) =>
       fn({
         user: {
@@ -160,17 +145,17 @@ describe("PlatformGuard", () => {
     await expect(guard.canActivate(ctx)).rejects.toThrow(UnauthorizedException);
   });
 
-  it("should bypass DB query when valid state is cached in Redis", async () => {
-    mockRedisClient.get.mockResolvedValueOnce("1");
-
+  it("should perform direct DB check on every request without caching, guaranteeing zero-staleness revocation", async () => {
     const ctx = createMockContext({
       userId: "admin-1",
       schoolId: SYSTEM_TENANT_ID,
       sessionId: "session-1",
       scope: "platform",
     });
-    const result = await guard.canActivate(ctx);
-    expect(result).toBe(true);
-    expect(mockPrisma.withTenant).not.toHaveBeenCalled();
+
+    await guard.canActivate(ctx);
+    await guard.canActivate(ctx);
+
+    expect(mockPrisma.withTenant).toHaveBeenCalledTimes(2);
   });
 });

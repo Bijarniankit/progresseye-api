@@ -851,6 +851,37 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
       expect(res.status).toBe(401);
       expect(res.body.message ?? res.body.detail).toMatch(/session has been revoked or expired/i);
     });
+
+    it("should immediately reject subsequent requests when session is revoked with zero cache window delay", async () => {
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
+
+      // 1. Initial request passes PlatformGuard (validation error 400 proves guard passed)
+      const res1 = await request(app.getHttpServer())
+        .post("/api/v1/platform/schools")
+        .set("Authorization", `Bearer ${testAdminToken}`)
+        .send({});
+
+      expect(res1.status).toBe(400);
+
+      // 2. Immediately revoke session in database
+      await prisma.$executeRaw`SELECT set_config('app.current_school_id', ${SYSTEM_TENANT_ID}, true)`;
+      await prisma.session.update({
+        where: { id: testAdminSession.id },
+        data: { revokedAt: new Date() },
+      });
+
+      // 3. Next request within milliseconds must be rejected with 401 immediately (no cache delay)
+      const res2 = await request(app.getHttpServer())
+        .post("/api/v1/platform/schools")
+        .set("Authorization", `Bearer ${testAdminToken}`)
+        .send({});
+
+      expect(res2.status).toBe(401);
+      expect(res2.body.message ?? res2.body.detail).toMatch(/session has been revoked or expired/i);
+    });
   });
 
   describe("scripts/bootstrap-platform-admin.ts CLI executions", () => {

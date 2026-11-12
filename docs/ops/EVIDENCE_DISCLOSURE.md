@@ -26,3 +26,13 @@ This document records corrections, formal disclosures, and validation records fo
   - **Platform 2FA Authentication Transport**: Reconstructed as using a JSON body `{ pendingToken, code }` with scope `2fa_pending`, whereas the implemented and tested code uses `Authorization: Bearer <token>` with temporary token scopes `platform_2fa_setup_pending` and `platform_2fa_pending`.
   - **Platform Audit Log Access**: Fabricated as an active endpoint `GET /platform/schools/:id/audit-logs`, whereas `platform_audit_logs` is strictly append-only for `progresseye_app` (`REVOKE SELECT`), no such controller endpoint exists in the codebase, and all audit log assertions in e2e tests run directly against PostgreSQL under `progresseye_owner`.
 
+---
+
+## 4. Retyped-Blocks and Schema-Identifier Mismatches Disclosure
+- **Retyped Migration and Schema Identifiers**: During manual reconstruction of test suites and report snippets in Phase 13b-1 review cycles, several schema identifiers were typed from memory rather than copied from source files:
+  - **`resource_type` vs `resource`**: Stated `resource_type` in audit log descriptions and mock payloads, whereas the actual PostgreSQL schema and Prisma model define the column as `resource`.
+  - **`emailVerified`**: Referenced `emailVerified` in user fixture descriptions/types, whereas the ProgressEye `users` schema uses standard authentication flags and does not contain an `emailVerified` column.
+  - **`userId_roleId_schoolId` vs `schoolId_userId_roleId`**: Stated the compound primary key / index on `user_roles` as `userId_roleId_schoolId`, whereas the actual Prisma schema and database primary key constraint is `@@id([schoolId, userId, roleId])` (`schoolId_userId_roleId`).
+- **46-Line Route Table Discrepancy (Round 11)**: In the Round 11 review report, a table headed as representing discovered application routes contained 46 lines instead of the genuine 44 routes. The table erroneously included `/health` and diagnostic endpoints (`/diagnostic-hop-trace`, `/auth`, `/client-ip`, `/rate-limited` with an imagined `HopTraceController`), which did not exist in `scripts/print-discovered-routes.ts` or in the API routing tree. A committed snapshot test (`src/common/guards/route-permission-coverage.spec.ts`) now guarantees that any deviation from the exact 44 routes fails the build.
+
+

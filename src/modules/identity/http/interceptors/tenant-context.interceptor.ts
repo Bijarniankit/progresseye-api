@@ -20,7 +20,7 @@ export class TenantContextInterceptor implements NestInterceptor {
     const user = request.user as AuthenticatedUser | undefined;
 
     if (user?.schoolId) {
-      const isPlatform = user.schoolId === SYSTEM_TENANT_ID || (user as any).scope === "platform";
+      const isPlatform = user.schoolId === SYSTEM_TENANT_ID && (user as any).scope === "platform";
       return this.tenantContext.runSync(
         { schoolId: user.schoolId, userId: user.userId, isPlatform },
         () => next.handle(),

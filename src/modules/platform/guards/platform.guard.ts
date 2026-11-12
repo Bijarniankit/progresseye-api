@@ -3,13 +3,11 @@ import {
   type ExecutionContext,
   ForbiddenException,
   Injectable,
-  Logger,
   UnauthorizedException,
 } from "@nestjs/common";
 import type { FastifyRequest } from "fastify";
 import { SYSTEM_TENANT_ID } from "../../../common/request-context/tenant-context.service";
 import { PrismaService } from "../../../infra/prisma/prisma.service";
-import { RedisService } from "../../../infra/redis/redis.service";
 
 interface RequestWithUser extends FastifyRequest {
   user?: {
@@ -22,13 +20,7 @@ interface RequestWithUser extends FastifyRequest {
 
 @Injectable()
 export class PlatformGuard implements CanActivate {
-  private readonly logger = new Logger(PlatformGuard.name);
-  private readonly TTL_SECONDS = 30; // 30s short-lived cache
-
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly redisService: RedisService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<RequestWithUser>();
@@ -44,22 +36,8 @@ export class PlatformGuard implements CanActivate {
       );
     }
 
-    // 1. Check short-TTL Redis cache
-    const cacheKey = `platform:guard:${user.userId}:${user.sessionId}`;
-    const redis = this.redisService.getClient();
-
-    if (redis && redis.status === "ready") {
-      try {
-        const cached = await redis.get(cacheKey);
-        if (cached === "1") {
-          return true;
-        }
-      } catch (err) {
-        this.logger.warn(`Platform guard cache read failure: ${(err as Error).message}`);
-      }
-    }
-
-    // 2. Query DB under system tenant
+    // Direct database validation per request under system tenant.
+    // Zero caching ensures instant enforcement of deactivations, role revocations, and session invalidations.
     const dbUser = await this.prisma.withTenant(SYSTEM_TENANT_ID, async (tx) => {
       return tx.user.findFirst({
         where: {
@@ -98,15 +76,6 @@ export class PlatformGuard implements CanActivate {
       throw new UnauthorizedException(
         "Platform administrator session has been revoked or expired.",
       );
-    }
-
-    // 3. Cache valid verification for short TTL
-    if (redis && redis.status === "ready") {
-      try {
-        await redis.set(cacheKey, "1", "EX", this.TTL_SECONDS);
-      } catch (err) {
-        this.logger.warn(`Platform guard cache write failure: ${(err as Error).message}`);
-      }
     }
 
     return true;
