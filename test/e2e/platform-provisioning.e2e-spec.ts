@@ -228,7 +228,13 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
   });
 
   afterAll(async () => {
-    if (app) await app.close();
+    if (app) {
+      const server = app.getHttpServer();
+      if (server && typeof server.closeAllConnections === "function") {
+        server.closeAllConnections();
+      }
+      await app.close();
+    }
     if (prisma) await prisma.$disconnect();
   });
 
@@ -862,6 +868,7 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
       const res1 = await request(app.getHttpServer())
         .post("/api/v1/platform/schools")
         .set("Authorization", `Bearer ${testAdminToken}`)
+        .set("Connection", "close")
         .send({});
 
       expect(res1.status).toBe(400);
@@ -877,6 +884,7 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
       const res2 = await request(app.getHttpServer())
         .post("/api/v1/platform/schools")
         .set("Authorization", `Bearer ${testAdminToken}`)
+        .set("Connection", "close")
         .send({});
 
       expect(res2.status).toBe(401);

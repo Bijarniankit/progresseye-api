@@ -16,6 +16,7 @@
   "testEnvironment": "node",
   "maxWorkers": 1,
   "verbose": true,
+  "forceExit": true,
   "moduleNameMapper": {
     "^@/(.*)$": "<rootDir>/src/$1"
   }
