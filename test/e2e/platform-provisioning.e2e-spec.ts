@@ -817,6 +817,28 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
       expect(res.body.message ?? res.body.detail).toMatch(/inactive or not found/i);
     });
 
+    it("should reject request with 401 when platform admin is soft-deleted even if isActive is true", async () => {
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
+
+      await prisma.$executeRaw`SELECT set_config('app.current_school_id', ${SYSTEM_TENANT_ID}, true)`;
+      await prisma.user.update({
+        where: { id: testAdminUser.id },
+        data: { deletedAt: new Date() },
+      });
+
+      const res = await request(app.getHttpServer())
+        .post("/api/v1/platform/schools")
+        .set("Authorization", `Bearer ${testAdminToken}`)
+        .set("Connection", "close")
+        .send({ name: "Soft Deleted Test", slug: `soft-del-${Date.now()}` });
+
+      expect(res.status).toBe(401);
+      expect(res.body.message ?? res.body.detail).toMatch(/inactive or not found/i);
+    });
+
     it("should reject request with 403 when platform_admin role is removed", async () => {
       if (!dbAvailable) {
         if (process.env.CI) throw new Error("Database is required in CI");

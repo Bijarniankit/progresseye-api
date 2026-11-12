@@ -129,7 +129,7 @@ The application enforces strict PostgreSQL Row-Level Security (`progresseye_app`
     - Zero caching eliminates cache invalidation latency and state drift, guaranteeing that administrator deactivation (`isActive: false`), role revocation (removal of `platform_admin`), or session invalidation (`revokedAt != null`) takes effect instantaneously on the very next HTTP request.
   - **Risk Assessment**: `progresseye_app` has `EXECUTE` privilege on this function, meaning if SQL injection were present in the application, an attacker could provision schools. This risk is mitigated by parameterized queries, strict input validation, slug regex `^[a-z0-9]+(-[a-z0-9]+)*$`, and application-level role checks. The function cannot read or modify any other tenant's data beyond creating the new tenant root.
 - **Role Seeding and Cross-Tenant Execution (`withPlatformTenant`)**:
-  - Once `platform_provision_school` creates the school row, role seeding executes via `withPlatformTenant(targetSchoolId, actorUserId, action, op)`.
+  - Once `platform_provision_school` creates the school row, role seeding executes via `withPlatformTenant(targetSchoolId, op, options)`.
   - `withPlatformTenant` sets `app.current_school_id = targetSchoolId`, executes the callback, inserts an append-only audit row into `platform_audit_logs`, and closes BACKLOG item 8 by being the sole authorized cross-tenant caller of `withTenant`.
   - Reseeding and role repair is supported via `POST /api/v1/platform/schools/:id/reseed-roles`.
 - **Platform Audit Logs**:

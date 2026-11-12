@@ -158,4 +158,35 @@ describe("PlatformGuard", () => {
 
     expect(mockPrisma.withTenant).toHaveBeenCalledTimes(2);
   });
+
+  it("should reject with UnauthorizedException immediately if platform admin is soft-deleted even if isActive is true", async () => {
+    mockPrisma.withTenant.mockImplementationOnce((_: any, fn: any) =>
+      fn({
+        user: {
+          findFirst: jest.fn().mockImplementation(({ where }: any) => {
+            if (where?.deletedAt === null) {
+              return null;
+            }
+            return {
+              id: "admin-1",
+              isActive: true,
+              deletedAt: new Date(),
+              userRoles: [{ role: { slug: "platform_admin" } }],
+              sessions: [
+                { id: "session-1", revokedAt: null, expiresAt: new Date(Date.now() + 100000) },
+              ],
+            };
+          }),
+        },
+      }),
+    );
+
+    const ctx = createMockContext({
+      userId: "admin-1",
+      schoolId: SYSTEM_TENANT_ID,
+      sessionId: "session-1",
+      scope: "platform",
+    });
+    await expect(guard.canActivate(ctx)).rejects.toThrow(UnauthorizedException);
+  });
 });
