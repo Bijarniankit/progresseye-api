@@ -122,12 +122,7 @@ export class RoleService {
     };
 
     if (actorUserId) {
-      await this.prisma.withPlatformTenant(
-        schoolId,
-        actorUserId,
-        "PLATFORM_SEED_BUILT_IN_ROLES",
-        runSeed,
-      );
+      await this.prisma.withPlatformTenant(schoolId, runSeed);
     } else {
       await this.prisma.withTenant(schoolId, runSeed);
     }

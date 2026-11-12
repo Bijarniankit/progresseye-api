@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { Writable } from "node:stream";
 import fastifyCookie from "@fastify/cookie";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
@@ -1185,41 +1187,24 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
       const countBefore = await prisma.role.count({ where: { schoolId: schoolCleanupId } });
       expect(countBefore).toBe(13);
 
-      // 4. Run the cleanup migration block as progresseye_owner (NOT postgres) under FORCE RLS in a transaction
+      // 4. Run the cleanup migration block by reading the actual migration file from disk
+      const migrationPath = path.resolve(
+        __dirname,
+        "../../prisma/migrations/20261111000000_platform_provisioning_and_system_tenant/migration.sql",
+      );
+      const migrationSql = fs.readFileSync(migrationPath, "utf8");
+
+      // Extract Section 5 DO block from migration.sql
+      const match = migrationSql.match(/-- 5\. Data Cleanup[\s\S]*?(DO \$\$[\s\S]*?END \$\$;)/);
+      if (!match || !match[1]) {
+        throw new Error("Section 5 cleanup DO block not found in migration.sql");
+      }
+      const cleanupSql = match[1];
+
       await prisma.$transaction(async (tx) => {
         await tx.$executeRawUnsafe(`SET ROLE progresseye_owner;`);
         try {
-          await tx.$executeRawUnsafe(`
-            DO $$
-            DECLARE
-                r RECORD;
-            BEGIN
-                PERFORM set_config('app.current_school_id', '', false);
-
-                FOR r IN (
-                    SELECT s.id AS school_id
-                    FROM schools s
-                    WHERE s.id <> '00000000-0000-0000-0000-000000000001'::uuid
-                ) LOOP
-                    PERFORM set_config('app.current_school_id', r.school_id::text, false);
-
-                    DELETE FROM role_permissions
-                    WHERE role_id IN (
-                        SELECT id FROM roles WHERE slug = 'platform_admin' AND school_id = r.school_id
-                    ) AND school_id = r.school_id;
-
-                    DELETE FROM user_roles
-                    WHERE role_id IN (
-                        SELECT id FROM roles WHERE slug = 'platform_admin' AND school_id = r.school_id
-                    ) AND school_id = r.school_id;
-
-                    DELETE FROM roles
-                    WHERE slug = 'platform_admin' AND school_id = r.school_id;
-                END LOOP;
-
-                PERFORM set_config('app.current_school_id', '', false);
-            END $$;
-          `);
+          await tx.$executeRawUnsafe(cleanupSql);
         } finally {
           await tx.$executeRawUnsafe(`RESET ROLE;`);
         }

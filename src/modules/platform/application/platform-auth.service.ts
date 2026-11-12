@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger, UnauthorizedException } from "
 import { SYSTEM_TENANT_ID } from "../../../common/request-context/tenant-context.service";
 import { normalizeEmail } from "../../../common/utils/sanitization";
 import { PrismaService } from "../../../infra/prisma/prisma.service";
+import { AbusePreventionService } from "../../identity/domain/abuse-prevention.service";
 import { PasswordService } from "../../identity/domain/password.service";
 import { TokenService } from "../../identity/domain/token.service";
 import { TotpService } from "../../identity/domain/totp.service";
@@ -24,6 +25,7 @@ export class PlatformAuthService {
     private readonly totpService: TotpService,
     private readonly sessionRepository: SessionRepository,
     private readonly platformAuditService: PlatformAuditService,
+    private readonly abusePreventionService: AbusePreventionService,
   ) {}
 
   /**
@@ -33,6 +35,8 @@ export class PlatformAuthService {
    */
   async login(dto: PlatformLoginDto, meta: { ip: string; userAgent?: string }) {
     const email = normalizeEmail(dto.email);
+
+    await this.abusePreventionService.checkPreLogin(meta.ip, email, SYSTEM_TENANT_ID);
 
     const user = await this.prisma.withTenant(SYSTEM_TENANT_ID, async (tx) => {
       return tx.user.findFirst({
@@ -52,6 +56,7 @@ export class PlatformAuthService {
     });
 
     if (!user || !user.isActive || !user.passwordHash) {
+      await this.abusePreventionService.recordFailedLogin(meta.ip, email, SYSTEM_TENANT_ID);
       await this.passwordService.verify(
         "$argon2id$v=19$m=65536,t=3,p=4$dummyhashdummyhashdummyhash$dummyhashdummyhashdummyhash",
         dto.password,
@@ -68,6 +73,7 @@ export class PlatformAuthService {
 
     const isValidPassword = await this.passwordService.verify(user.passwordHash, dto.password);
     if (!isValidPassword) {
+      await this.abusePreventionService.recordFailedLogin(meta.ip, email, SYSTEM_TENANT_ID);
       await this.platformAuditService.recordEvent({
         actorUserId: user.id,
         action: "PLATFORM_LOGIN_FAILURE",
@@ -82,6 +88,7 @@ export class PlatformAuthService {
 
     const hasPlatformAdminRole = user.userRoles.some((ur) => ur.role.slug === "platform_admin");
     if (!hasPlatformAdminRole) {
+      await this.abusePreventionService.recordFailedLogin(meta.ip, email, SYSTEM_TENANT_ID);
       await this.platformAuditService.recordEvent({
         actorUserId: user.id,
         action: "PLATFORM_LOGIN_FAILURE",
@@ -249,6 +256,8 @@ export class PlatformAuthService {
       sessionId: session.id,
     });
 
+    await this.abusePreventionService.recordSuccessfulLogin(meta.ip, user.email, SYSTEM_TENANT_ID);
+
     await this.platformAuditService.recordEvent({
       actorUserId: user.id,
       action: "PLATFORM_2FA_ENABLED",
@@ -352,6 +361,7 @@ export class PlatformAuthService {
     }
 
     if (!isValid) {
+      await this.abusePreventionService.recordFailedLogin(meta.ip, claims.sub, SYSTEM_TENANT_ID);
       await this.platformAuditService.recordEvent({
         actorUserId: claims.sub,
         action: "PLATFORM_2FA_VERIFY_FAILURE",
@@ -392,6 +402,8 @@ export class PlatformAuthService {
       userId: user.id,
       sessionId: session.id,
     });
+
+    await this.abusePreventionService.recordSuccessfulLogin(meta.ip, user.email, SYSTEM_TENANT_ID);
 
     await this.platformAuditService.recordEvent({
       actorUserId: user.id,

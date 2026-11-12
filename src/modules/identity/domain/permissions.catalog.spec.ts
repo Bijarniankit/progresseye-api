@@ -27,12 +27,16 @@ describe("Permissions Catalog (Phase 13b-1)", () => {
     expect(platformPerms.map((p) => p.code).sort()).toEqual(expectedPlatformCodes.sort());
   });
 
-  it("should verify every code in SENSITIVE_PERMISSIONS exists in PERMISSIONS_CATALOG", () => {
+  it("should verify every code in SENSITIVE_PERMISSIONS exists in PERMISSIONS_CATALOG and fail on unknown codes", () => {
     const allCatalogCodes = new Set(PERMISSIONS_CATALOG.map((p) => p.code));
-    expect(SENSITIVE_PERMISSIONS.length).toBeGreaterThan(0);
+    expect(SENSITIVE_PERMISSIONS.length).toBe(17);
     for (const code of SENSITIVE_PERMISSIONS) {
       expect(allCatalogCodes.has(code)).toBe(true);
     }
+
+    // Verify assertion fails on unknown code
+    const unknownCode = "nonexistent.permission.code";
+    expect(allCatalogCodes.has(unknownCode as any)).toBe(false);
   });
 
   it("should verify requiresTwoFactor covers platform_admin, principal, and accountant", () => {

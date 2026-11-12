@@ -72,6 +72,7 @@ async function main() {
     "20261102000000_tenancy_and_row_level_security",
     "20261108000000_auth_and_session_foundation",
     "20261109000000_account_lifecycle_and_reset_tokens",
+    "20261110000000_two_factor_auth_and_recovery_codes",
   ];
 
   const migrationsDir = path.resolve(__dirname, "../../prisma/migrations");
@@ -97,6 +98,8 @@ async function main() {
   const sampleFamilyId = "018f0000-0000-7000-8000-000000000004";
   const sampleResetTokenId = "018f0000-0000-7000-8000-000000000005";
   const sampleVerifyTokenId = "018f0000-0000-7000-8000-000000000006";
+  const sampleRoleId = "018f0000-0000-7000-8000-000000000007";
+  const sampleLegacyPermId = "018f0000-0000-7000-8000-000000000008";
 
   await upgradePrisma.$executeRawUnsafe(`
     INSERT INTO schools (id, slug, name, updated_at)
@@ -123,7 +126,26 @@ async function main() {
     VALUES ('${sampleVerifyTokenId}'::uuid, '${sampleSchoolId}'::uuid, '${sampleUserId}'::uuid, 'seeded_verify_hash', CURRENT_TIMESTAMP + INTERVAL '24 hours', CURRENT_TIMESTAMP);
   `);
 
-  console.log("Real main schema (migrations 1-6) applied and sample tenant data seeded.");
+  // Seed 13a legacy permission identity.auth.manage and attach to a tenant role to test cascading/safe deletion
+  await upgradePrisma.$executeRawUnsafe(`
+    INSERT INTO permissions (id, code, module, description, created_at)
+    VALUES ('${sampleLegacyPermId}'::uuid, 'identity.auth.manage', 'identity', 'Legacy auth manage perm', CURRENT_TIMESTAMP)
+    ON CONFLICT (code) DO NOTHING;
+  `);
+
+  await upgradePrisma.$executeRawUnsafe(`
+    INSERT INTO roles (id, school_id, name, slug, description, is_system, created_at, updated_at)
+    VALUES ('${sampleRoleId}'::uuid, '${sampleSchoolId}'::uuid, 'Legacy Manager', 'legacy_manager', 'Role referencing identity.auth.manage', false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+  `);
+
+  await upgradePrisma.$executeRawUnsafe(`
+    INSERT INTO role_permissions (id, school_id, role_id, permission_id, created_at)
+    VALUES (gen_random_uuid(), '${sampleSchoolId}'::uuid, '${sampleRoleId}'::uuid, (SELECT id FROM permissions WHERE code = 'identity.auth.manage'), CURRENT_TIMESTAMP);
+  `);
+
+  console.log(
+    "Real main schema (migrations 1-7) applied and sample tenant data with referencing role_permissions seeded.",
+  );
 
   console.log("Running prisma migrate deploy on upgraded database...");
   const upgradeDeployOutput = execSync("pnpm prisma migrate deploy", {

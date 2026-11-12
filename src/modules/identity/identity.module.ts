@@ -50,6 +50,7 @@ import { SessionRepository } from "./infra/session.repository";
     PoliciesGuard,
     TenantContextInterceptor,
     AuthEmailNotificationService,
+    AbusePreventionService,
   ],
 })
 export class IdentityModule {}

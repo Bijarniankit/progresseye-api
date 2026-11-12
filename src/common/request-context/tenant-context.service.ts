@@ -5,6 +5,7 @@ export interface TenantContext {
   schoolId?: string;
   userId?: string;
   requestId?: string;
+  isPlatform?: boolean;
 }
 
 export const NIL_UUID = "00000000-0000-0000-0000-000000000000";
@@ -60,6 +61,14 @@ export class TenantContextService {
    */
   getTenantId(): string | undefined {
     return this.storage.getStore()?.schoolId;
+  }
+
+  /**
+   * Checks whether the active execution context holds platform administrative scope.
+   */
+  isPlatformScope(): boolean {
+    const store = this.storage.getStore();
+    return store?.isPlatform === true || store?.schoolId === SYSTEM_TENANT_ID;
   }
 
   /**

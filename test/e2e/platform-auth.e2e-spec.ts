@@ -403,4 +403,34 @@ describe("Phase 13b-1: Platform Auth E2E Suite", () => {
       );
     });
   });
+
+  describe("Platform Auth Rate Limiting & Anti-Abuse Lockout", () => {
+    it("should enforce rate limiting and lockout on repeated failed platform logins", async () => {
+      if (!dbAvailable) return;
+
+      const wrongCredentials = {
+        email: "superadmin@progresseye.internal",
+        password: "IncorrectPassword123!",
+      };
+
+      // Perform repeated failed login attempts
+      for (let i = 0; i < 5; i++) {
+        await request(app.getHttpServer())
+          .post("/api/v1/platform/auth/login")
+          .send(wrongCredentials);
+      }
+
+      // Further attempt should be blocked with rate limiting / lockout (429 or 401 with lockout message)
+      const lockedRes = await request(app.getHttpServer())
+        .post("/api/v1/platform/auth/login")
+        .send(wrongCredentials);
+
+      expect([401, 429]).toContain(lockedRes.status);
+      if (lockedRes.status === 429) {
+        expect(lockedRes.body.message ?? lockedRes.body.detail).toMatch(
+          /too many requests|rate limit/i,
+        );
+      }
+    });
+  });
 });

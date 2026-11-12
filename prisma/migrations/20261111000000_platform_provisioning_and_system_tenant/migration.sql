@@ -56,6 +56,25 @@ VALUES (
 )
 ON CONFLICT ("code") DO NOTHING;
 
+-- Clean up any legacy role_permissions referencing identity.auth.manage across tenant schools under FORCE RLS
+DO $$
+DECLARE
+    r RECORD;
+BEGIN
+    PERFORM set_config('app.current_school_id', '', false);
+    FOR r IN (
+        SELECT s.id AS school_id
+        FROM schools s
+    ) LOOP
+        PERFORM set_config('app.current_school_id', r.school_id::text, false);
+        DELETE FROM role_permissions
+        WHERE permission_id IN (
+            SELECT id FROM permissions WHERE code = 'identity.auth.manage'
+        ) AND school_id = r.school_id;
+    END LOOP;
+    PERFORM set_config('app.current_school_id', '', false);
+END $$;
+
 DELETE FROM "permissions" WHERE "code" = 'identity.auth.manage';
 
 -- 4. Seed platform_admin role in system tenant root
@@ -197,13 +216,13 @@ BEGIN
     INSERT INTO platform_audit_logs (id, actor_user_id, action, resource, resource_id, payload, client_ip_hash, user_agent, created_at)
     VALUES (
         gen_random_uuid(),
-        NULL,
+        NULLIF(current_setting('app.current_user_id', true), '')::uuid,
         'PLATFORM_SCHOOL_PROVISION_INIT',
         'schools',
         v_school_id::text,
         jsonb_build_object('slug', v_normalized_slug, 'schoolId', v_school_id::text, 'fields', jsonb_build_array('name', 'slug')),
-        NULL,
-        'PostgreSQL Function platform_provision_school',
+        NULLIF(current_setting('app.client_ip_hash', true), ''),
+        COALESCE(NULLIF(current_setting('app.user_agent', true), ''), 'PostgreSQL Function platform_provision_school'),
         CURRENT_TIMESTAMP(3)
     );
 

@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import fastifyCookie from "@fastify/cookie";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
 import { Test, type TestingModule } from "@nestjs/testing";
@@ -6,7 +7,10 @@ import { Logger } from "nestjs-pino";
 import request from "supertest";
 import { uuidv7 } from "uuidv7";
 import { AppModule } from "../../src/app.module";
-import { SYSTEM_TENANT_ID } from "../../src/common/request-context/tenant-context.service";
+import {
+  SYSTEM_TENANT_ID,
+  TenantContextService,
+} from "../../src/common/request-context/tenant-context.service";
 import { PrismaService } from "../../src/infra/prisma/prisma.service";
 import { RoleService } from "../../src/modules/identity/application/role.service";
 import { TokenService } from "../../src/modules/identity/domain/token.service";
@@ -393,6 +397,340 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
         .set("Authorization", `Bearer ${platformAdminToken}`);
 
       expect(res.status).toBe(404);
+    });
+  });
+
+  describe("platform_audit_logs DB Permissions", () => {
+    it("should allow progresseye_app to INSERT and reject SELECT, UPDATE, DELETE, TRUNCATE with 42501", async () => {
+      if (!dbAvailable) return;
+
+      const dummyLogId = uuidv7();
+
+      // 1. INSERT must succeed as progresseye_app
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(`SET ROLE progresseye_app;`);
+        try {
+          await tx.$executeRawUnsafe(`
+            INSERT INTO "platform_audit_logs" (
+              "id", "actor_user_id", "action", "resource", "resource_id", "payload", "created_at"
+            ) VALUES (
+              '${dummyLogId}'::uuid, NULL, 'TEST_APP_INSERT', 'test', '${dummyLogId}', '{}'::jsonb, CURRENT_TIMESTAMP
+            );
+          `);
+        } finally {
+          await tx.$executeRawUnsafe(`RESET ROLE;`);
+        }
+      });
+
+      // 2. SELECT must fail with 42501 (permission denied)
+      await expect(
+        prisma.$transaction(async (tx) => {
+          await tx.$executeRawUnsafe(`SET ROLE progresseye_app;`);
+          try {
+            await tx.$executeRawUnsafe(
+              `SELECT * FROM "platform_audit_logs" WHERE id = '${dummyLogId}'::uuid;`,
+            );
+          } finally {
+            await tx.$executeRawUnsafe(`RESET ROLE;`);
+          }
+        }),
+      ).rejects.toThrow(/permission denied/i);
+
+      // 3. UPDATE must fail with 42501
+      await expect(
+        prisma.$transaction(async (tx) => {
+          await tx.$executeRawUnsafe(`SET ROLE progresseye_app;`);
+          try {
+            await tx.$executeRawUnsafe(
+              `UPDATE "platform_audit_logs" SET action = 'MODIFIED' WHERE id = '${dummyLogId}'::uuid;`,
+            );
+          } finally {
+            await tx.$executeRawUnsafe(`RESET ROLE;`);
+          }
+        }),
+      ).rejects.toThrow(/permission denied/i);
+
+      // 4. DELETE must fail with 42501
+      await expect(
+        prisma.$transaction(async (tx) => {
+          await tx.$executeRawUnsafe(`SET ROLE progresseye_app;`);
+          try {
+            await tx.$executeRawUnsafe(
+              `DELETE FROM "platform_audit_logs" WHERE id = '${dummyLogId}'::uuid;`,
+            );
+          } finally {
+            await tx.$executeRawUnsafe(`RESET ROLE;`);
+          }
+        }),
+      ).rejects.toThrow(/permission denied/i);
+
+      // 5. TRUNCATE must fail with 42501
+      await expect(
+        prisma.$transaction(async (tx) => {
+          await tx.$executeRawUnsafe(`SET ROLE progresseye_app;`);
+          try {
+            await tx.$executeRawUnsafe(`TRUNCATE TABLE "platform_audit_logs";`);
+          } finally {
+            await tx.$executeRawUnsafe(`RESET ROLE;`);
+          }
+        }),
+      ).rejects.toThrow(/permission denied/i);
+    });
+  });
+
+  describe("withPlatformTenant contract and cross-tenant execution", () => {
+    it("should execute operations in target school context and record platform_audit_logs row", async () => {
+      if (!dbAvailable) return;
+
+      const targetSchoolId = existingSchoolId;
+      const tenantContextService = app.get(TenantContextService);
+
+      await tenantContextService.run(
+        { schoolId: SYSTEM_TENANT_ID, userId: platformAdminUserId, isPlatform: true },
+        async () => {
+          const testRoleId = uuidv7();
+          await prisma.withPlatformTenant(targetSchoolId, async (tx: any) => {
+            const currentSchoolSetting = await tx.$queryRaw<Array<{ current_setting: string }>>`
+              SELECT current_setting('app.current_school_id', true)
+            `;
+            expect(currentSchoolSetting[0]?.current_setting).toBe(targetSchoolId);
+
+            return tx.role.create({
+              data: {
+                id: testRoleId,
+                schoolId: targetSchoolId,
+                name: "Platform Created Role",
+                slug: `platform_role_${Date.now()}`,
+                description: "Created via withPlatformTenant",
+                isSystem: false,
+              },
+            });
+          });
+
+          // Verify audit log entry was written
+          const auditRows = await prisma.$queryRaw<any[]>`
+            SELECT * FROM platform_audit_logs
+            WHERE resource_id = ${targetSchoolId}
+            ORDER BY created_at DESC
+            LIMIT 1;
+          `;
+          expect(auditRows.length).toBeGreaterThan(0);
+          expect(auditRows[0].actor_user_id).toBe(platformAdminUserId);
+        },
+      );
+    });
+
+    it("should reject cross-tenant execution when invoked without platform scope", async () => {
+      if (!dbAvailable) return;
+
+      const tenantContextService = app.get(TenantContextService);
+      const foreignSchoolId = uuidv7();
+
+      await tenantContextService.run(
+        { schoolId: existingSchoolId, userId: tenantAdminUserId, isPlatform: false },
+        async () => {
+          await expect(
+            prisma.withPlatformTenant(foreignSchoolId, async () => {
+              return true;
+            }),
+          ).rejects.toThrow(
+            /Cross-tenant execution requires active platform administrative scope/i,
+          );
+
+          await expect(
+            prisma.withTenant(foreignSchoolId, async () => {
+              return true;
+            }),
+          ).rejects.toThrow(/Cross-tenant execution forbidden/i);
+        },
+      );
+    });
+  });
+
+  describe("PlatformGuard Live Database Verification", () => {
+    let testAdminUser: any;
+    let testAdminSession: any;
+    let testAdminToken: string;
+
+    beforeEach(async () => {
+      if (!dbAvailable) return;
+
+      const testAdminId = uuidv7();
+      await prisma.$executeRaw`SELECT set_config('app.current_school_id', ${SYSTEM_TENANT_ID}, true)`;
+
+      testAdminUser = await prisma.user.create({
+        data: {
+          id: testAdminId,
+          schoolId: SYSTEM_TENANT_ID,
+          email: `state-test-${Date.now()}@progresseye.internal`,
+          passwordHash: "dummy-hash",
+          firstName: "State",
+          lastName: "TestAdmin",
+          isActive: true,
+          mustChangePassword: false,
+          isTwoFactorEnabled: true,
+        },
+      });
+
+      const platformRole = await prisma.role.findFirst({
+        where: { schoolId: SYSTEM_TENANT_ID, slug: "platform_admin" },
+      });
+
+      await prisma.userRole.create({
+        data: {
+          schoolId: SYSTEM_TENANT_ID,
+          userId: testAdminUser.id,
+          roleId: platformRole!.id,
+        },
+      });
+
+      testAdminSession = await prisma.session.create({
+        data: {
+          schoolId: SYSTEM_TENANT_ID,
+          userId: testAdminUser.id,
+          tokenHash: `test-hash-${Date.now()}`,
+          clientType: "web",
+          expiresAt: new Date(Date.now() + 3600000),
+        },
+      });
+
+      const { token } = await tokenService.createPlatformAccessToken({
+        userId: testAdminUser.id,
+        sessionId: testAdminSession.id,
+      });
+      testAdminToken = token;
+    });
+
+    it("should reject request with 401 when platform admin is deactivated", async () => {
+      if (!dbAvailable) return;
+
+      await prisma.$executeRaw`SELECT set_config('app.current_school_id', ${SYSTEM_TENANT_ID}, true)`;
+      await prisma.user.update({
+        where: { id: testAdminUser.id },
+        data: { isActive: false },
+      });
+
+      const res = await request(app.getHttpServer())
+        .post("/api/v1/platform/schools")
+        .set("Authorization", `Bearer ${testAdminToken}`)
+        .send({ name: "Deactivated Test", slug: `deact-${Date.now()}` });
+
+      expect(res.status).toBe(401);
+      expect(res.body.message ?? res.body.detail).toMatch(/inactive or not found/i);
+    });
+
+    it("should reject request with 403 when platform_admin role is removed", async () => {
+      if (!dbAvailable) return;
+
+      await prisma.$executeRaw`SELECT set_config('app.current_school_id', ${SYSTEM_TENANT_ID}, true)`;
+      await prisma.userRole.deleteMany({
+        where: { userId: testAdminUser.id, schoolId: SYSTEM_TENANT_ID },
+      });
+
+      const res = await request(app.getHttpServer())
+        .post("/api/v1/platform/schools")
+        .set("Authorization", `Bearer ${testAdminToken}`)
+        .send({ name: "Role Removed Test", slug: `no-role-${Date.now()}` });
+
+      expect(res.status).toBe(403);
+      expect(res.body.message ?? res.body.detail).toMatch(/role has been revoked/i);
+    });
+
+    it("should reject request with 401 when platform admin session is revoked", async () => {
+      if (!dbAvailable) return;
+
+      await prisma.$executeRaw`SELECT set_config('app.current_school_id', ${SYSTEM_TENANT_ID}, true)`;
+      await prisma.session.update({
+        where: { id: testAdminSession.id },
+        data: { revokedAt: new Date() },
+      });
+
+      const res = await request(app.getHttpServer())
+        .post("/api/v1/platform/schools")
+        .set("Authorization", `Bearer ${testAdminToken}`)
+        .send({ name: "Revoked Session Test", slug: `revoked-${Date.now()}` });
+
+      expect(res.status).toBe(401);
+      expect(res.body.message ?? res.body.detail).toMatch(/session has been revoked or expired/i);
+    });
+  });
+
+  describe("scripts/bootstrap-platform-admin.ts CLI executions", () => {
+    it("should refuse bootstrap in production without ENABLE_PLATFORM_BOOTSTRAP=true", () => {
+      let failed = false;
+      let output = "";
+      try {
+        output = execSync("pnpm exec ts-node scripts/bootstrap-platform-admin.ts", {
+          env: {
+            ...process.env,
+            NODE_ENV: "production",
+            ENABLE_PLATFORM_BOOTSTRAP: "false",
+            PLATFORM_BOOTSTRAP_SECRET: "a-very-long-secret-key-that-is-at-least-32-chars-long",
+          },
+          stdio: "pipe",
+        }).toString();
+      } catch (err: any) {
+        failed = true;
+        output = err.stderr ? err.stderr.toString() : err.stdout.toString();
+      }
+      expect(failed).toBe(true);
+      expect(output).toMatch(/Platform admin bootstrap is disabled in production/i);
+    });
+
+    it("should refuse bootstrap when secret is shorter than 32 characters", () => {
+      let failed = false;
+      let output = "";
+      try {
+        output = execSync("pnpm exec ts-node scripts/bootstrap-platform-admin.ts", {
+          env: {
+            ...process.env,
+            NODE_ENV: "development",
+            ENABLE_PLATFORM_BOOTSTRAP: "true",
+            PLATFORM_BOOTSTRAP_SECRET: "too-short-secret",
+          },
+          stdio: "pipe",
+        }).toString();
+      } catch (err: any) {
+        failed = true;
+        output = err.stderr ? err.stderr.toString() : err.stdout.toString();
+      }
+      expect(failed).toBe(true);
+      expect(output).toMatch(/at least 32 characters/i);
+    });
+
+    it("should refuse second run when platform administrator already exists", () => {
+      if (!dbAvailable) return;
+      let failed = false;
+      let output = "";
+      try {
+        output = execSync("pnpm exec ts-node scripts/bootstrap-platform-admin.ts", {
+          env: {
+            ...process.env,
+            NODE_ENV: "development",
+            ENABLE_PLATFORM_BOOTSTRAP: "true",
+            PLATFORM_BOOTSTRAP_SECRET: "a-very-long-secret-key-that-is-at-least-32-chars-long",
+          },
+          stdio: "pipe",
+        }).toString();
+      } catch (err: any) {
+        failed = true;
+        output = err.stderr ? err.stderr.toString() : err.stdout.toString();
+      }
+      expect(failed).toBe(true);
+      expect(output).toMatch(/Platform administrator already exists.*Bootstrap refused/i);
+    });
+
+    it("should confirm bootstrap audit log row never contains plaintext password", async () => {
+      if (!dbAvailable) return;
+
+      const auditRows = await prisma.$queryRaw<any[]>`
+        SELECT * FROM platform_audit_logs
+        WHERE action = 'PLATFORM_ADMIN_BOOTSTRAP';
+      `;
+      for (const row of auditRows) {
+        const payloadStr = JSON.stringify(row.payload);
+        expect(payloadStr).not.toMatch(/password/i);
+      }
     });
   });
 

@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
+import { AppConfigService } from "../../../config/config.service";
 import { PrismaService } from "../../../infra/prisma/prisma.service";
 import { RoleService } from "../../identity/application/role.service";
 import { PlatformAuditService } from "./platform-audit.service";
@@ -10,9 +11,11 @@ describe("PlatformSchoolService", () => {
   let mockPrisma: any;
   let mockRoleService: any;
   let mockPlatformAudit: any;
+  let mockConfig: any;
 
   beforeEach(async () => {
     mockPrisma = {
+      $executeRaw: jest.fn().mockResolvedValue(1),
       $queryRaw: jest.fn(),
       school: {
         findUnique: jest.fn(),
@@ -24,6 +27,9 @@ describe("PlatformSchoolService", () => {
     mockPlatformAudit = {
       recordEvent: jest.fn().mockResolvedValue(undefined),
     };
+    mockConfig = {
+      get: jest.fn().mockReturnValue("test-hmac-secret-32-chars-long"),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -31,6 +37,7 @@ describe("PlatformSchoolService", () => {
         { provide: PrismaService, useValue: mockPrisma },
         { provide: RoleService, useValue: mockRoleService },
         { provide: PlatformAuditService, useValue: mockPlatformAudit },
+        { provide: AppConfigService, useValue: mockConfig },
       ],
     }).compile();
 

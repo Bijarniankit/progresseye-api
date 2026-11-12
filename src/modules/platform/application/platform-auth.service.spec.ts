@@ -2,6 +2,7 @@ import { BadRequestException, UnauthorizedException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { SYSTEM_TENANT_ID } from "../../../common/request-context/tenant-context.service";
 import { PrismaService } from "../../../infra/prisma/prisma.service";
+import { AbusePreventionService } from "../../identity/domain/abuse-prevention.service";
 import { PasswordService } from "../../identity/domain/password.service";
 import { TokenService } from "../../identity/domain/token.service";
 import { TotpService } from "../../identity/domain/totp.service";
@@ -17,6 +18,7 @@ describe("PlatformAuthService", () => {
   let mockTotpService: any;
   let mockSessionRepo: any;
   let mockPlatformAudit: any;
+  let mockAbusePrevention: any;
 
   beforeEach(async () => {
     mockPrisma = {
@@ -60,6 +62,11 @@ describe("PlatformAuthService", () => {
     mockPlatformAudit = {
       recordEvent: jest.fn().mockResolvedValue(undefined),
     };
+    mockAbusePrevention = {
+      checkPreLogin: jest.fn().mockResolvedValue(undefined),
+      recordFailedLogin: jest.fn().mockResolvedValue(undefined),
+      recordSuccessfulLogin: jest.fn().mockResolvedValue(undefined),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -70,6 +77,7 @@ describe("PlatformAuthService", () => {
         { provide: TotpService, useValue: mockTotpService },
         { provide: SessionRepository, useValue: mockSessionRepo },
         { provide: PlatformAuditService, useValue: mockPlatformAudit },
+        { provide: AbusePreventionService, useValue: mockAbusePrevention },
       ],
     }).compile();
 

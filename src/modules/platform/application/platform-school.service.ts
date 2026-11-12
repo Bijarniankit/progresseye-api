@@ -5,6 +5,8 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
+import { hmacHash } from "../../../common/utils/sanitization";
+import { AppConfigService } from "../../../config/config.service";
 import { PrismaService } from "../../../infra/prisma/prisma.service";
 import { RoleService } from "../../identity/application/role.service";
 import type { CreateSchoolDto } from "../dto/platform-school.dto";
@@ -13,12 +15,16 @@ import { PlatformAuditService } from "./platform-audit.service";
 @Injectable()
 export class PlatformSchoolService {
   private readonly logger = new Logger(PlatformSchoolService.name);
+  private readonly hmacSecret: string;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly roleService: RoleService,
     private readonly platformAuditService: PlatformAuditService,
-  ) {}
+    private readonly config: AppConfigService,
+  ) {
+    this.hmacSecret = this.config.get("AUTH_LOG_HMAC_SECRET");
+  }
 
   /**
    * Provisions a new school tenant via the PostgreSQL SECURITY DEFINER function platform_provision_school.
@@ -30,8 +36,17 @@ export class PlatformSchoolService {
     meta: { ip: string; userAgent?: string },
   ) {
     let newSchoolId: string;
+    const clientIpHmac = meta.ip ? hmacHash(meta.ip, this.hmacSecret) : "";
+    const userAgentVal = meta.userAgent || "";
 
     try {
+      await this.prisma.$executeRaw`
+        SELECT
+          set_config('app.current_user_id', ${actorUserId}, true),
+          set_config('app.client_ip_hash', ${clientIpHmac}, true),
+          set_config('app.user_agent', ${userAgentVal}, true)
+      `;
+
       const rows = await this.prisma.$queryRaw<{ school_id: string }[]>`
         SELECT platform_provision_school(
           ${dto.slug},
