@@ -40,7 +40,7 @@ export class PlatformSchoolService {
     actorUserId: string,
     meta: { ip: string; userAgent?: string },
   ) {
-    const clientIpHmac = meta.ip ? hmacHash(meta.ip, this.hmacSecret) : "";
+    const clientIpHmac = hmacHash(meta.ip || "127.0.0.1", this.hmacSecret);
     const userAgentVal = meta.userAgent || "";
 
     return this.tenantContext.run(
@@ -132,7 +132,7 @@ export class PlatformSchoolService {
     actorUserId: string,
     meta: { ip: string; userAgent?: string },
   ) {
-    const clientIpHmac = meta.ip ? hmacHash(meta.ip, this.hmacSecret) : "";
+    const clientIpHmac = hmacHash(meta.ip || "127.0.0.1", this.hmacSecret);
 
     return this.tenantContext.run(
       {

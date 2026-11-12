@@ -170,7 +170,10 @@ describe("Phase 13b-1: Platform Auth E2E Suite", () => {
     let verifyToken = "";
 
     it("should reject platform login with wrong password", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const res = await request(app.getHttpServer())
         .post("/api/v1/platform/auth/login")
@@ -180,7 +183,10 @@ describe("Phase 13b-1: Platform Auth E2E Suite", () => {
     });
 
     it("should reject tenant credentials at platform login endpoint", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const res = await request(app.getHttpServer())
         .post("/api/v1/platform/auth/login")
@@ -190,7 +196,10 @@ describe("Phase 13b-1: Platform Auth E2E Suite", () => {
     });
 
     it("should return platform_2fa_setup_pending on initial platform login", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const res = await request(app.getHttpServer())
         .post("/api/v1/platform/auth/login")
@@ -205,7 +214,10 @@ describe("Phase 13b-1: Platform Auth E2E Suite", () => {
     });
 
     it("should initialize 2FA setup with platform_2fa_setup_pending token", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const res = await request(app.getHttpServer())
         .post("/api/v1/platform/auth/2fa/setup")
@@ -219,7 +231,10 @@ describe("Phase 13b-1: Platform Auth E2E Suite", () => {
     });
 
     it("should reject 2FA enable with invalid code", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const res = await request(app.getHttpServer())
         .post("/api/v1/platform/auth/2fa/enable")
@@ -229,8 +244,11 @@ describe("Phase 13b-1: Platform Auth E2E Suite", () => {
       expect(res.status).toBe(400);
     });
 
-    it("should enable 2FA with valid TOTP code and return platform access session", async () => {
-      if (!dbAvailable) return;
+    it("POST /api/v1/platform/auth/2fa/enable: success path issues active platform token with platform scope", async () => {
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const validCode = totpService.generateCode(totpSecret);
       const res = await request(app.getHttpServer())
@@ -244,11 +262,18 @@ describe("Phase 13b-1: Platform Auth E2E Suite", () => {
       expect(Array.isArray(res.body.recoveryCodes)).toBe(true);
       expect(res.body.recoveryCodes.length).toBeGreaterThan(0);
 
+      const decoded = await tokenService.verifyAccessToken(res.body.accessToken);
+      expect(decoded.scope).toBe("platform");
+      expect(decoded.schoolId).toBe(SYSTEM_TENANT_ID);
+
       recoveryCode = res.body.recoveryCodes[0];
     });
 
     it("subsequent login should issue platform_2fa_pending challenge", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const res = await request(app.getHttpServer())
         .post("/api/v1/platform/auth/login")
@@ -263,7 +288,10 @@ describe("Phase 13b-1: Platform Auth E2E Suite", () => {
     });
 
     it("should complete login verification using recovery code", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const res = await request(app.getHttpServer())
         .post("/api/v1/platform/auth/2fa/verify")
@@ -287,7 +315,10 @@ describe("Phase 13b-1: Platform Auth E2E Suite", () => {
     );
 
     it("should reject tenant access token at platform 2FA verify endpoint", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const { token: tenantToken } = await tokenService.createAccessToken({
         userId: tenantUserId,
@@ -305,7 +336,10 @@ describe("Phase 13b-1: Platform Auth E2E Suite", () => {
     });
 
     it("should reject tenant 2fa_pending token at platform 2FA verify endpoint", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const { token: tenant2faToken } = await tokenService.createTemporaryTwoFactorToken({
         userId: tenantUserId,
@@ -322,7 +356,10 @@ describe("Phase 13b-1: Platform Auth E2E Suite", () => {
     });
 
     it("should reject token with tampered scope at platform 2FA verify endpoint", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const tamperedScopeToken = await new SignJWT({
         schoolId: SYSTEM_TENANT_ID,
@@ -346,7 +383,10 @@ describe("Phase 13b-1: Platform Auth E2E Suite", () => {
     });
 
     it("should reject token for non-system-tenant user claiming platform_2fa_pending scope", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const foreignUserToken = await new SignJWT({
         schoolId: SYSTEM_TENANT_ID,
@@ -367,7 +407,10 @@ describe("Phase 13b-1: Platform Auth E2E Suite", () => {
     });
 
     it("should reject tenant access token at platform 2FA setup endpoint", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const { token: tenantToken } = await tokenService.createAccessToken({
         userId: tenantUserId,
@@ -386,7 +429,10 @@ describe("Phase 13b-1: Platform Auth E2E Suite", () => {
     });
 
     it("should reject token with wrong scope at platform 2FA setup endpoint", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const { token: challengeToken } = await tokenService.createTemporaryPlatformTwoFactorToken({
         userId: platformAdminUserId,
@@ -406,7 +452,10 @@ describe("Phase 13b-1: Platform Auth E2E Suite", () => {
 
   describe("Platform Auth Rate Limiting & Anti-Abuse Lockout", () => {
     it("should enforce rate limiting and lockout on repeated failed platform logins", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const wrongCredentials = {
         email: "superadmin@progresseye.internal",

@@ -83,20 +83,25 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     op: (tx: Prisma.TransactionClient) => Promise<T>,
     options?: { operationName?: string; clientIpHash?: string },
   ): Promise<T> {
-    if (this.tenantContext) {
-      this.tenantContext.validateTenantId(targetSchoolId);
-      if (!this.tenantContext.isPlatformScope()) {
-        throw new Error("Cross-tenant execution requires active platform administrative scope.");
-      }
+    if (!this.tenantContext || !this.tenantContext.isPlatformScope()) {
+      throw new Error("Cross-tenant execution requires active platform administrative scope.");
     }
+    this.tenantContext.validateTenantId(targetSchoolId);
 
-    const store = this.tenantContext?.getContext();
+    const store = this.tenantContext.getContext();
     if (!store?.userId) {
       throw new Error("Cross-tenant execution requires verified platform actor user ID.");
     }
     const actorUserId = store.userId;
     const opName = options?.operationName || "PLATFORM_CROSS_TENANT_OPERATION";
-    const clientIpHash = options?.clientIpHash || (store as any)?.clientIpHash || "internal";
+    const clientIpHash = options?.clientIpHash || (store as any)?.clientIpHash;
+    if (
+      !clientIpHash ||
+      typeof clientIpHash !== "string" ||
+      !/^[0-9a-f]{64}$/i.test(clientIpHash)
+    ) {
+      throw new Error("Cross-tenant execution requires valid 64-character HMAC clientIpHash.");
+    }
 
     return this.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT set_config('app.current_school_id', ${targetSchoolId}, true)`;

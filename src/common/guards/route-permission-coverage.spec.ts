@@ -101,4 +101,62 @@ describe("Route Permission Coverage (Phase 13)", () => {
     expect(unannotatedRoutes).toHaveLength(0);
     expect(totalRoutesChecked).toBeGreaterThan(15);
   });
+
+  it("should match committed routes snapshot ensuring no unregistered or unvetted route modifications", () => {
+    const controllers = discoveryService.getControllers();
+    const discovered: string[] = [];
+
+    for (const wrapper of controllers) {
+      const { instance, metatype } = wrapper;
+      if (!instance || !metatype) continue;
+
+      const controllerPath = Reflect.getMetadata(PATH_METADATA, metatype) || "";
+      const prototype = Object.getPrototypeOf(instance);
+      const methodNames = metadataScanner.getAllMethodNames(prototype);
+
+      for (const methodName of methodNames) {
+        const handler = prototype[methodName];
+        const methodPath = reflector.get(PATH_METADATA, handler);
+        const httpCode = reflector.get(METHOD_METADATA, handler);
+        if (methodPath === undefined || httpCode === undefined) continue;
+
+        const httpMethod =
+          ["GET", "POST", "PUT", "DELETE", "PATCH", "ALL", "OPTIONS", "HEAD"][httpCode] ||
+          "UNKNOWN";
+        const cleanBasePath = Array.isArray(controllerPath) ? controllerPath[0] : controllerPath;
+        const cleanMethodPath = Array.isArray(methodPath) ? methodPath[0] : methodPath;
+        const full = `/api/v1/${cleanBasePath}/${cleanMethodPath}`
+          .replace(/\/+/g, "/")
+          .replace(/\/$/, "");
+
+        const reqPerm = reflector.get(REQUIRED_PERMISSIONS_KEY, handler);
+        const isPub = reflector.get(IS_PUBLIC_KEY, handler);
+        const pubJust = reflector.get(PUBLIC_JUSTIFICATION_KEY, handler);
+        const isAuth = reflector.get(IS_AUTHENTICATED_KEY, handler);
+        const authJust = reflector.get(AUTHENTICATED_JUSTIFICATION_KEY, handler);
+
+        let type = "UNKNOWN";
+        if (reqPerm) {
+          const permCodes = Array.isArray(reqPerm)
+            ? reqPerm
+                .map((p) => (typeof p === "object" && p && "code" in p ? p.code : String(p)))
+                .join(",")
+            : String(reqPerm);
+          type = `RBAC: ${permCodes}`;
+        } else if (isAuth) {
+          type = `AUTH: ${authJust}`;
+        } else if (isPub) {
+          type = `PUBLIC: ${pubJust}`;
+        }
+
+        discovered.push(
+          `${httpMethod.padEnd(6)} ${full.padEnd(45)} ${metatype.name}.${methodName.padEnd(30)} ${type}`,
+        );
+      }
+    }
+
+    discovered.sort();
+    expect(discovered).toHaveLength(44);
+    expect(discovered).toMatchSnapshot();
+  });
 });

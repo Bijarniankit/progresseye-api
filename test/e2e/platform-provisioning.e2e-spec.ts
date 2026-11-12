@@ -2,6 +2,7 @@ import { execSync } from "node:child_process";
 import fastifyCookie from "@fastify/cookie";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
 import { Test, type TestingModule } from "@nestjs/testing";
+import { PrismaClient } from "@prisma/client";
 import * as argon2 from "argon2";
 import { Logger } from "nestjs-pino";
 import request from "supertest";
@@ -30,6 +31,17 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
 
   let platformAdminToken: string;
   let tenantAdminToken: string;
+
+  const dbUrlStr = process.env.DATABASE_URL ?? "postgresql://postgres@localhost:5432/test_db";
+  const urlObj = new URL(dbUrlStr);
+  const host = urlObj.hostname;
+  const port = urlObj.port || "5432";
+  const dbName = urlObj.pathname.replace(/^\//, "");
+  const ownerSecret = process.env.OWNER_ROLE_SECRET ?? "";
+  const ownerAuth = ownerSecret ? `:${ownerSecret}` : "";
+  const ownerDbUrl =
+    process.env.OWNER_DATABASE_URL ??
+    `postgresql://progresseye_owner${ownerAuth}@${host}:${port}/${dbName}`;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -229,8 +241,11 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
       expect(res.status).toBe(401);
     });
 
-    it("should reject tenant admin request with 403 Forbidden (platform scope required)", async () => {
-      if (!dbAvailable) return;
+    it("POST /api/v1/platform/schools: principal gets 403 Forbidden (platform scope required)", async () => {
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const res = await request(app.getHttpServer())
         .post("/api/v1/platform/schools")
@@ -244,7 +259,10 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
     });
 
     it("should reject reserved slugs with 400 Bad Request", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const res = await request(app.getHttpServer())
         .post("/api/v1/platform/schools")
@@ -256,7 +274,10 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
     });
 
     it("should reject invalid slug format with 400 Bad Request", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const res = await request(app.getHttpServer())
         .post("/api/v1/platform/schools")
@@ -267,7 +288,10 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
     });
 
     it("should successfully provision a new school with 12 built-in roles and audit rows", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const targetSlug = `new-horizon-${Date.now().toString().slice(-6)}`;
       const res = await request(app.getHttpServer())
@@ -319,7 +343,10 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
     });
 
     it("should reject duplicate school slug with 409 Conflict", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const res = await request(app.getHttpServer())
         .post("/api/v1/platform/schools")
@@ -332,8 +359,11 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
   });
 
   describe("POST /api/v1/platform/schools/:id/reseed-roles", () => {
-    it("should reject tenant admin request with 403 Forbidden (platform scope required)", async () => {
-      if (!dbAvailable) return;
+    it("POST /api/v1/platform/schools/:id/reseed-roles: principal gets 403 Forbidden (platform scope required)", async () => {
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const res = await request(app.getHttpServer())
         .post(`/api/v1/platform/schools/${existingSchoolId}/reseed-roles`)
@@ -346,7 +376,10 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
     });
 
     it("should reseed roles for provisioned school and log PLATFORM_SCHOOL_RESEED_ROLES", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const res = await request(app.getHttpServer())
         .post(`/api/v1/platform/schools/${existingSchoolId}/reseed-roles`)
@@ -364,7 +397,10 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
     });
 
     it("should repair school when failure occurred between provisioning and role seeding", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       // 1. Simulate failure between DB function and NestJS role seeding:
       // Call PostgreSQL platform_provision_school directly, leaving 0 roles seeded in NestJS
@@ -407,7 +443,10 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
     });
 
     it("should return 404 if school to reseed does not exist", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const nonExistentSchoolId = uuidv7();
       const res = await request(app.getHttpServer())
@@ -420,7 +459,10 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
 
   describe("platform_audit_logs DB Permissions", () => {
     it("should allow progresseye_app to INSERT and reject SELECT, UPDATE, DELETE, TRUNCATE with 42501", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const dummyLogId = uuidv7();
 
@@ -499,13 +541,21 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
 
   describe("withPlatformTenant contract and cross-tenant execution", () => {
     it("should execute operations in target school context and record platform_audit_logs row", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const targetSchoolId = existingSchoolId;
       const tenantContextService = app.get(TenantContextService);
 
       await tenantContextService.run(
-        { schoolId: SYSTEM_TENANT_ID, userId: platformAdminUserId, isPlatform: true },
+        {
+          schoolId: SYSTEM_TENANT_ID,
+          userId: platformAdminUserId,
+          isPlatform: true,
+          clientIpHash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        },
         async () => {
           const testRoleId = uuidv7();
           await prisma.withPlatformTenant(targetSchoolId, async (tx: any) => {
@@ -540,7 +590,10 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
     });
 
     it("should reject cross-tenant execution when invoked without platform scope", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const tenantContextService = app.get(TenantContextService);
       const foreignSchoolId = uuidv7();
@@ -573,7 +626,12 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
 
       const tenantContextService = app.get(TenantContextService);
       await tenantContextService.run(
-        { schoolId: SYSTEM_TENANT_ID, userId: platformAdminUserId, isPlatform: true },
+        {
+          schoolId: SYSTEM_TENANT_ID,
+          userId: platformAdminUserId,
+          isPlatform: true,
+          clientIpHash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        },
         async () => {
           await expect(
             prisma.withTenant(existingSchoolId, async () => {
@@ -584,42 +642,94 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
       );
     });
 
-    it("should roll back operation if platform audit log insertion fails in withPlatformTenant", async () => {
+    it("should roll back operation if platform audit log insertion fails in withPlatformTenant, with positive control and verification as progresseye_owner", async () => {
       if (!dbAvailable) {
         if (process.env.CI) throw new Error("Database is required in CI");
         return;
       }
 
-      const tenantContextService = app.get(TenantContextService);
-      const testRoleId = uuidv7();
+      const ownerPrisma = new PrismaClient({
+        datasources: { db: { url: ownerDbUrl } },
+      });
+      await ownerPrisma.$connect();
 
-      // Passing non-UUID string as userId causes PostgreSQL to reject INSERT into platform_audit_logs.actor_user_id (UUID column)
-      // inside withPlatformTenant's single transaction, guaranteeing full rollback of fn(tx).
-      await tenantContextService.run(
-        { schoolId: SYSTEM_TENANT_ID, userId: "not-a-valid-uuid", isPlatform: true },
-        async () => {
-          await expect(
-            prisma.withPlatformTenant(existingSchoolId, async (tx: any) => {
+      const tenantContextService = app.get(TenantContextService);
+      const testHmac = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+      try {
+        // 1. Positive control: successful execution creates role and makes it visible under target tenant
+        const positiveRoleId = uuidv7();
+        await tenantContextService.run(
+          {
+            schoolId: SYSTEM_TENANT_ID,
+            userId: platformAdminUserId,
+            isPlatform: true,
+            clientIpHash: testHmac,
+          },
+          async () => {
+            await prisma.withPlatformTenant(existingSchoolId, async (tx: any) => {
               await tx.role.create({
                 data: {
-                  id: testRoleId,
+                  id: positiveRoleId,
                   schoolId: existingSchoolId,
-                  name: "Rollback Test Role",
-                  slug: `rollback_role_${Date.now()}`,
-                  description: "Should be rolled back",
+                  name: "Positive Control Role",
+                  slug: `positive_role_${Date.now()}`,
+                  description: "Visible upon success",
                   isSystem: false,
                 },
               });
-            }),
-          ).rejects.toThrow(/invalid input syntax for type uuid/i);
+            });
+          },
+        );
 
-          // Assert the role was rolled back and does not exist in DB
-          const roleInDb = await prisma.role.findUnique({
-            where: { id: testRoleId },
-          });
-          expect(roleInDb).toBeNull();
-        },
-      );
+        // Verify positive control role is visible when queried as progresseye_owner with target tenant set
+        await ownerPrisma.$transaction(async (tx) => {
+          await tx.$executeRaw`SELECT set_config('app.current_school_id', ${existingSchoolId}, true);`;
+          const positiveRows: any[] = await tx.$queryRaw`
+            SELECT id FROM roles WHERE id = ${positiveRoleId}::uuid;
+          `;
+          expect(positiveRows).toHaveLength(1);
+        });
+
+        // 2. Negative control: passing non-UUID actor ID causes PostgreSQL UUID type check failure
+        // in platform_audit_logs INSERT within the single transaction, rolling back op(tx).
+        const rollbackRoleId = uuidv7();
+        await tenantContextService.run(
+          {
+            schoolId: SYSTEM_TENANT_ID,
+            userId: "not-a-valid-uuid",
+            isPlatform: true,
+            clientIpHash: testHmac,
+          },
+          async () => {
+            await expect(
+              prisma.withPlatformTenant(existingSchoolId, async (tx: any) => {
+                await tx.role.create({
+                  data: {
+                    id: rollbackRoleId,
+                    schoolId: existingSchoolId,
+                    name: "Rollback Test Role",
+                    slug: `rollback_role_${Date.now()}`,
+                    description: "Should be rolled back",
+                    isSystem: false,
+                  },
+                });
+              }),
+            ).rejects.toThrow(/invalid input syntax for type uuid/i);
+          },
+        );
+
+        // Verify the rollback role does NOT exist when queried as progresseye_owner with target tenant set
+        await ownerPrisma.$transaction(async (tx) => {
+          await tx.$executeRaw`SELECT set_config('app.current_school_id', ${existingSchoolId}, true);`;
+          const rollbackRows: any[] = await tx.$queryRaw`
+            SELECT id FROM roles WHERE id = ${rollbackRoleId}::uuid;
+          `;
+          expect(rollbackRows).toHaveLength(0);
+        });
+      } finally {
+        await ownerPrisma.$disconnect();
+      }
     });
   });
 
@@ -629,7 +739,10 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
     let testAdminToken: string;
 
     beforeEach(async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const testAdminId = uuidv7();
       await prisma.$executeRaw`SELECT set_config('app.current_school_id', ${SYSTEM_TENANT_ID}, true)`;
@@ -678,7 +791,10 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
     });
 
     it("should reject request with 401 when platform admin is deactivated", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       await prisma.$executeRaw`SELECT set_config('app.current_school_id', ${SYSTEM_TENANT_ID}, true)`;
       await prisma.user.update({
@@ -696,7 +812,10 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
     });
 
     it("should reject request with 403 when platform_admin role is removed", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       await prisma.$executeRaw`SELECT set_config('app.current_school_id', ${SYSTEM_TENANT_ID}, true)`;
       await prisma.userRole.deleteMany({
@@ -713,7 +832,10 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
     });
 
     it("should reject request with 401 when platform admin session is revoked", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       await prisma.$executeRaw`SELECT set_config('app.current_school_id', ${SYSTEM_TENANT_ID}, true)`;
       await prisma.session.update({
@@ -778,7 +900,10 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
       if (process.env.CI && !dbAvailable) {
         throw new Error("Database is required in CI for bootstrap testing");
       }
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       // 1. Clear platform admin users from system tenant under FORCE RLS
       await prisma.$executeRaw`SELECT set_config('app.current_school_id', ${SYSTEM_TENANT_ID}, true)`;
@@ -796,10 +921,11 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
       const bootstrapEmail = `bootstrap-${Date.now()}@progresseye.internal`;
 
       try {
-        // 2. Execute bootstrap script via ts-node
+        // 2. Execute bootstrap script via ts-node under progresseye_owner database connection
         const stdout1 = execSync("pnpm exec ts-node scripts/bootstrap-platform-admin.ts", {
           env: {
             ...process.env,
+            DATABASE_URL: ownerDbUrl,
             NODE_ENV: "development",
             ENABLE_PLATFORM_BOOTSTRAP: "true",
             PLATFORM_BOOTSTRAP_SECRET: secret,
@@ -849,6 +975,7 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
           secondRunOutput = execSync("pnpm exec ts-node scripts/bootstrap-platform-admin.ts", {
             env: {
               ...process.env,
+              DATABASE_URL: ownerDbUrl,
               NODE_ENV: "development",
               ENABLE_PLATFORM_BOOTSTRAP: "true",
               PLATFORM_BOOTSTRAP_SECRET: secret,
@@ -906,7 +1033,10 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
     });
 
     it("should confirm bootstrap audit log row never contains plaintext password", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const auditRows = await prisma.$queryRaw<any[]>`
         SELECT * FROM platform_audit_logs
@@ -921,7 +1051,10 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
 
   describe("Platform Admin Bootstrap Logic", () => {
     it("should refuse bootstrap when platform administrator already exists in system tenant", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       // Under FORCE RLS set system tenant context
       await prisma.$executeRaw`SELECT set_config('app.current_school_id', ${SYSTEM_TENANT_ID}, true)`;
