@@ -1,6 +1,8 @@
 import {
   isPlatformPermission,
   PERMISSIONS_CATALOG,
+  requiresTwoFactor,
+  SENSITIVE_PERMISSIONS,
   SYSTEM_PLATFORM_ROLES,
   TENANT_BUILT_IN_ROLES,
 } from "./permissions.catalog";
@@ -23,6 +25,49 @@ describe("Permissions Catalog (Phase 13b-1)", () => {
       "platform.invite.create",
     ];
     expect(platformPerms.map((p) => p.code).sort()).toEqual(expectedPlatformCodes.sort());
+  });
+
+  it("should verify every code in SENSITIVE_PERMISSIONS exists in PERMISSIONS_CATALOG", () => {
+    const allCatalogCodes = new Set(PERMISSIONS_CATALOG.map((p) => p.code));
+    expect(SENSITIVE_PERMISSIONS.length).toBeGreaterThan(0);
+    for (const code of SENSITIVE_PERMISSIONS) {
+      expect(allCatalogCodes.has(code)).toBe(true);
+    }
+  });
+
+  it("should verify requiresTwoFactor covers platform_admin, principal, and accountant", () => {
+    const platformAdmin = SYSTEM_PLATFORM_ROLES.find((r) => r.slug === "platform_admin");
+    const principal = TENANT_BUILT_IN_ROLES.find((r) => r.slug === "principal");
+    const accountant = TENANT_BUILT_IN_ROLES.find((r) => r.slug === "accountant");
+
+    expect(platformAdmin).toBeDefined();
+    expect(principal).toBeDefined();
+    expect(accountant).toBeDefined();
+
+    expect(requiresTwoFactor(platformAdmin!.permissions)).toBe(true);
+    expect(requiresTwoFactor(principal!.permissions)).toBe(true);
+    expect(requiresTwoFactor(accountant!.permissions)).toBe(true);
+  });
+
+  it("should verify non-administrative tenant roles do NOT require 2FA", () => {
+    const nonSensitiveSlugs = [
+      "teacher",
+      "student",
+      "parent",
+      "librarian",
+      "receptionist",
+      "exam_coordinator",
+      "transport_manager",
+      "hostel_warden",
+      "nurse",
+      "counselor",
+    ];
+
+    for (const slug of nonSensitiveSlugs) {
+      const role = TENANT_BUILT_IN_ROLES.find((r) => r.slug === slug);
+      expect(role).toBeDefined();
+      expect(requiresTwoFactor(role!.permissions)).toBe(false);
+    }
   });
 
   it("should have exactly 1 system platform role (platform_admin) and 12 tenant built-in roles", () => {

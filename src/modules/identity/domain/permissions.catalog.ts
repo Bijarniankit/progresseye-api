@@ -256,6 +256,52 @@ export function isPlatformPermission(code: string): boolean {
 }
 
 /**
+ * Sensitive permissions that mandate two-factor authentication (2FA) enrollment.
+ * Derived strictly from canonical PERMISSIONS_CATALOG constants.
+ * Any user holding a role containing one or more of these permissions must have 2FA enabled.
+ * Covers:
+ * - platform_admin (all platform.* permissions)
+ * - principal (identity administration, school configuration, financial authority)
+ * - accountant (finance invoice creation, financial ledger reporting)
+ */
+export const SENSITIVE_PERMISSIONS = [
+  // Platform administration (platform_admin)
+  "platform.school.create",
+  "platform.school.read",
+  "platform.school.update",
+  "platform.plan.manage",
+  "platform.invite.create",
+
+  // Identity and RBAC administration (principal)
+  "identity.role.create",
+  "identity.role.update",
+  "identity.role.delete",
+  "identity.role.assign",
+  "identity.user.create",
+  "identity.user.update",
+  "identity.user.delete",
+
+  // School tenant administration (principal)
+  "tenancy.school.update",
+  "tenancy.invite.create",
+  "tenancy.invite.revoke",
+
+  // Financial transactions and ledger operations (accountant & principal)
+  "finance.invoice.create",
+  "finance.report.read",
+] as const;
+
+export type SensitivePermissionCode = (typeof SENSITIVE_PERMISSIONS)[number];
+
+/**
+ * Evaluates whether a set of permission codes includes any sensitive permission requiring 2FA.
+ */
+export function requiresTwoFactor(permissions: string[]): boolean {
+  const sensitiveSet = new Set<string>(SENSITIVE_PERMISSIONS);
+  return permissions.some((code) => sensitiveSet.has(code));
+}
+
+/**
  * 13 Built-in System Roles and their Canonical Permission Sets
  */
 export interface BuiltInRoleDefinition {

@@ -172,7 +172,7 @@ BEGIN
 
     -- Check uniqueness across all schools (empty setting allows seeing all active schools under schools_tenant_isolation)
     PERFORM set_config('app.current_school_id', '', true);
-    IF EXISTS (SELECT 1 FROM schools WHERE slug = v_normalized_slug) THEN
+    IF EXISTS (SELECT 1 FROM schools WHERE slug = v_normalized_slug AND deleted_at IS NULL) THEN
         IF v_prev_tenant IS NOT NULL AND v_prev_tenant <> '' THEN
             PERFORM set_config('app.current_school_id', v_prev_tenant, true);
         END IF;

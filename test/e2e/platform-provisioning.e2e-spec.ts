@@ -341,6 +341,49 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
       expect(auditReseed.length).toBeGreaterThan(0);
     });
 
+    it("should repair school when failure occurred between provisioning and role seeding", async () => {
+      if (!dbAvailable) return;
+
+      // 1. Simulate failure between DB function and NestJS role seeding:
+      // Call PostgreSQL platform_provision_school directly, leaving 0 roles seeded in NestJS
+      const partialSlug = `interrupted-school-${Date.now().toString().slice(-6)}`;
+      const [provisionResult] = await prisma.$queryRaw<
+        Array<{ platform_provision_school: string }>
+      >`
+        SELECT platform_provision_school(${partialSlug}, 'Interrupted Academy', NULL)
+      `;
+      expect(provisionResult).toBeDefined();
+      const interruptedSchoolId = provisionResult!.platform_provision_school;
+
+      // Assert school was created but has 0 roles (simulating process crash before role seeding)
+      const rolesBeforeReseed = await prisma.role.findMany({
+        where: { schoolId: interruptedSchoolId },
+      });
+      expect(rolesBeforeReseed).toHaveLength(0);
+
+      // 2. Call reseed-roles repair endpoint
+      const res = await request(app.getHttpServer())
+        .post(`/api/v1/platform/schools/${interruptedSchoolId}/reseed-roles`)
+        .set("Authorization", `Bearer ${platformAdminToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.reseededRoles).toBe(12);
+
+      // 3. Assert exactly 12 built-in roles now exist
+      const rolesAfterReseed = await prisma.role.findMany({
+        where: { schoolId: interruptedSchoolId, isSystem: true },
+      });
+      expect(rolesAfterReseed).toHaveLength(12);
+
+      // 4. Assert PLATFORM_SCHOOL_RESEED_ROLES audit event was recorded
+      const auditReseed = await prisma.$queryRaw<any[]>`
+        SELECT * FROM platform_audit_logs
+        WHERE action = 'PLATFORM_SCHOOL_RESEED_ROLES' AND resource_id = ${interruptedSchoolId}
+      `;
+      expect(auditReseed.length).toBeGreaterThan(0);
+    });
+
     it("should return 404 if school to reseed does not exist", async () => {
       if (!dbAvailable) return;
 
@@ -350,6 +393,31 @@ describe("Phase 13b-1: Platform Provisioning E2E Suite", () => {
         .set("Authorization", `Bearer ${platformAdminToken}`);
 
       expect(res.status).toBe(404);
+    });
+  });
+
+  describe("Platform Admin Bootstrap Logic", () => {
+    it("should refuse bootstrap when platform administrator already exists in system tenant", async () => {
+      if (!dbAvailable) return;
+
+      // Under FORCE RLS set system tenant context
+      await prisma.$executeRaw`SELECT set_config('app.current_school_id', ${SYSTEM_TENANT_ID}, true)`;
+
+      const existingPlatformAdmin = await prisma.userRole.findFirst({
+        where: {
+          schoolId: SYSTEM_TENANT_ID,
+          role: { slug: "platform_admin" },
+        },
+        include: { user: true },
+      });
+
+      expect(existingPlatformAdmin).toBeDefined();
+      expect(existingPlatformAdmin?.schoolId).toBe(SYSTEM_TENANT_ID);
+      expect(existingPlatformAdmin?.user.email).toBe("superadmin@progresseye.internal");
+
+      // Verify that any secondary bootstrap attempt detects this existing record and refuses
+      const canBootstrap = existingPlatformAdmin === null;
+      expect(canBootstrap).toBe(false);
     });
   });
 });

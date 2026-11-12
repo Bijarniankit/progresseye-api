@@ -2,6 +2,7 @@ import fastifyCookie from "@fastify/cookie";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
 import { Test, type TestingModule } from "@nestjs/testing";
 import * as argon2 from "argon2";
+import { SignJWT } from "jose";
 import { Logger } from "nestjs-pino";
 import request from "supertest";
 import { uuidv7 } from "uuidv7";
@@ -277,6 +278,126 @@ describe("Phase 13b-1: Platform Auth E2E Suite", () => {
       const claims = await tokenService.verifyAccessToken(res.body.accessToken);
       expect(claims.scope).toBe("platform");
       expect(claims.schoolId).toBe(SYSTEM_TENANT_ID);
+    });
+  });
+
+  describe("Platform 2FA Token Scope & Cross-Tenant Rejection", () => {
+    const jwtSecret = new TextEncoder().encode(
+      process.env.AUTH_JWT_SECRET || "ci_jwt_secret_throwaway_token_min_32_chars_long",
+    );
+
+    it("should reject tenant access token at platform 2FA verify endpoint", async () => {
+      if (!dbAvailable) return;
+
+      const { token: tenantToken } = await tokenService.createAccessToken({
+        userId: tenantUserId,
+        schoolId: tenantSchoolId,
+        sessionId: uuidv7(),
+      });
+
+      const res = await request(app.getHttpServer())
+        .post("/api/v1/platform/auth/2fa/verify")
+        .set("Authorization", `Bearer ${tenantToken}`)
+        .send({ code: "123456" });
+
+      expect(res.status).toBe(401);
+      expect(res.body.message ?? res.body.detail).toMatch(/Invalid platform 2FA credentials/i);
+    });
+
+    it("should reject tenant 2fa_pending token at platform 2FA verify endpoint", async () => {
+      if (!dbAvailable) return;
+
+      const { token: tenant2faToken } = await tokenService.createTemporaryTwoFactorToken({
+        userId: tenantUserId,
+        schoolId: tenantSchoolId,
+      });
+
+      const res = await request(app.getHttpServer())
+        .post("/api/v1/platform/auth/2fa/verify")
+        .set("Authorization", `Bearer ${tenant2faToken}`)
+        .send({ code: "123456" });
+
+      expect(res.status).toBe(401);
+      expect(res.body.message ?? res.body.detail).toMatch(/Invalid platform 2FA credentials/i);
+    });
+
+    it("should reject token with tampered scope at platform 2FA verify endpoint", async () => {
+      if (!dbAvailable) return;
+
+      const tamperedScopeToken = await new SignJWT({
+        schoolId: SYSTEM_TENANT_ID,
+        scope: "tampered_scope_escalation",
+      })
+        .setSubject(platformAdminUserId)
+        .setProtectedHeader({ alg: "HS256" })
+        .setExpirationTime("5m")
+        .sign(jwtSecret);
+
+      const res = await request(app.getHttpServer())
+        .post("/api/v1/platform/auth/2fa/verify")
+        .set("Authorization", `Bearer ${tamperedScopeToken}`)
+        .send({ code: "123456" });
+
+      expect(res.status).toBe(401);
+      expect(res.body.message ?? res.body.detail).toMatch(/Invalid platform 2FA credentials/i);
+    });
+
+    it("should reject token for non-system-tenant user claiming platform_2fa_pending scope", async () => {
+      if (!dbAvailable) return;
+
+      const foreignUserToken = await new SignJWT({
+        schoolId: SYSTEM_TENANT_ID,
+        scope: "platform_2fa_pending",
+      })
+        .setSubject(tenantUserId)
+        .setProtectedHeader({ alg: "HS256" })
+        .setExpirationTime("5m")
+        .sign(jwtSecret);
+
+      const res = await request(app.getHttpServer())
+        .post("/api/v1/platform/auth/2fa/verify")
+        .set("Authorization", `Bearer ${foreignUserToken}`)
+        .send({ code: "123456" });
+
+      expect(res.status).toBe(401);
+      expect(res.body.message ?? res.body.detail).toMatch(/Invalid.*credentials/i);
+    });
+
+    it("should reject tenant access token at platform 2FA setup endpoint", async () => {
+      if (!dbAvailable) return;
+
+      const { token: tenantToken } = await tokenService.createAccessToken({
+        userId: tenantUserId,
+        schoolId: tenantSchoolId,
+        sessionId: uuidv7(),
+      });
+
+      const res = await request(app.getHttpServer())
+        .post("/api/v1/platform/auth/2fa/setup")
+        .set("Authorization", `Bearer ${tenantToken}`);
+
+      expect(res.status).toBe(401);
+      expect(res.body.message ?? res.body.detail).toMatch(
+        /Invalid platform 2FA setup credentials/i,
+      );
+    });
+
+    it("should reject token with wrong scope at platform 2FA setup endpoint", async () => {
+      if (!dbAvailable) return;
+
+      const { token: challengeToken } = await tokenService.createTemporaryPlatformTwoFactorToken({
+        userId: platformAdminUserId,
+        setup: false, // scope: "platform_2fa_pending" (challenge, not setup)
+      });
+
+      const res = await request(app.getHttpServer())
+        .post("/api/v1/platform/auth/2fa/setup")
+        .set("Authorization", `Bearer ${challengeToken}`);
+
+      expect(res.status).toBe(401);
+      expect(res.body.message ?? res.body.detail).toMatch(
+        /Invalid platform 2FA setup credentials/i,
+      );
     });
   });
 });

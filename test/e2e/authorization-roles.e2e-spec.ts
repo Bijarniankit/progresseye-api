@@ -1129,5 +1129,122 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
           .catch(() => {});
       }
     });
+
+    it("should run cleanup migration as progresseye_owner under FORCE RLS, removing platform_admin role/perms/users and leaving 12 tenant roles", async () => {
+      if (!dbAvailable) return;
+
+      const schoolCleanupId = uuidv7();
+      const testUserId = uuidv7();
+
+      // 1. Seed tenant school
+      await prisma.school.create({
+        data: {
+          id: schoolCleanupId,
+          name: "Cleanup Test Academy",
+          slug: `cleanup-${Date.now().toString().slice(-6)}`,
+          isActive: true,
+        },
+      });
+
+      // 2. Seed 12 tenant built-in roles
+      await roleService.seedBuiltInRolesForSchool(schoolCleanupId);
+
+      // 3. Inject a legacy 13a platform_admin role with role_permissions and user_roles in this tenant school
+      const platformAdminRoleId = uuidv7();
+      await prisma.$executeRaw`
+        INSERT INTO roles (id, school_id, name, slug, description, is_system, created_at, updated_at)
+        VALUES (${platformAdminRoleId}::uuid, ${schoolCleanupId}::uuid, 'Platform Administrator', 'platform_admin', 'Legacy tenant platform admin', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+      `;
+
+      // Create test user in this school
+      await prisma.user.create({
+        data: {
+          id: testUserId,
+          schoolId: schoolCleanupId,
+          email: `cleanup-user-${Date.now()}@test.internal`,
+          firstName: "Cleanup",
+          lastName: "User",
+          isActive: true,
+        },
+      });
+
+      // Link user_role and role_permission to platform_admin in this tenant school
+      const anyPerm = await prisma.permission.findFirst();
+      if (anyPerm) {
+        await prisma.$executeRaw`
+          INSERT INTO role_permissions (id, school_id, role_id, permission_id, created_at)
+          VALUES (gen_random_uuid(), ${schoolCleanupId}::uuid, ${platformAdminRoleId}::uuid, ${anyPerm.id}::uuid, CURRENT_TIMESTAMP);
+        `;
+      }
+      await prisma.$executeRaw`
+        INSERT INTO user_roles (id, school_id, user_id, role_id, created_at)
+        VALUES (gen_random_uuid(), ${schoolCleanupId}::uuid, ${testUserId}::uuid, ${platformAdminRoleId}::uuid, CURRENT_TIMESTAMP);
+      `;
+
+      // Verify that before cleanup, 13 roles exist for this school (including platform_admin)
+      const countBefore = await prisma.role.count({ where: { schoolId: schoolCleanupId } });
+      expect(countBefore).toBe(13);
+
+      // 4. Run the cleanup migration block as progresseye_owner (NOT postgres) under FORCE RLS
+      await prisma.$executeRawUnsafe(`SET ROLE progresseye_owner;`);
+      try {
+        await prisma.$executeRawUnsafe(`
+          DO $$
+          DECLARE
+              r RECORD;
+          BEGIN
+              FOR r IN (
+                  SELECT DISTINCT s.id AS school_id
+                  FROM schools s
+                  JOIN roles ro ON ro.school_id = s.id
+                  WHERE ro.slug = 'platform_admin'
+                    AND s.id <> '00000000-0000-0000-0000-000000000001'::uuid
+              ) LOOP
+                  PERFORM set_config('app.current_school_id', r.school_id::text, true);
+
+                  DELETE FROM role_permissions
+                  WHERE role_id IN (
+                      SELECT id FROM roles WHERE slug = 'platform_admin' AND school_id = r.school_id
+                  ) AND school_id = r.school_id;
+
+                  DELETE FROM user_roles
+                  WHERE role_id IN (
+                      SELECT id FROM roles WHERE slug = 'platform_admin' AND school_id = r.school_id
+                  ) AND school_id = r.school_id;
+
+                  DELETE FROM roles
+                  WHERE slug = 'platform_admin' AND school_id = r.school_id;
+              END LOOP;
+
+              PERFORM set_config('app.current_school_id', '', true);
+          END $$;
+        `);
+      } finally {
+        await prisma.$executeRawUnsafe(`RESET ROLE;`);
+      }
+
+      // 5. Assert: platform_admin role is deleted
+      const platformAdminAfter = await prisma.role.findFirst({
+        where: { schoolId: schoolCleanupId, slug: "platform_admin" },
+      });
+      expect(platformAdminAfter).toBeNull();
+
+      // Assert: orphaned role_permissions and user_roles are removed
+      const rolePermsAfter = await prisma.rolePermission.count({
+        where: { schoolId: schoolCleanupId, roleId: platformAdminRoleId },
+      });
+      expect(rolePermsAfter).toBe(0);
+
+      const userRolesAfter = await prisma.userRole.count({
+        where: { schoolId: schoolCleanupId, roleId: platformAdminRoleId },
+      });
+      expect(userRolesAfter).toBe(0);
+
+      // Assert: exactly 12 built-in tenant roles remain
+      const totalRolesAfter = await prisma.role.count({
+        where: { schoolId: schoolCleanupId },
+      });
+      expect(totalRolesAfter).toBe(12);
+    });
   });
 });
