@@ -39,13 +39,12 @@ VALUES (
 ON CONFLICT ("id") DO NOTHING;
 
 -- 3. Catalog adjustments: add platform.invite.create and remove obsolete identity.auth.manage
-INSERT INTO "permissions" ("id", "code", "module", "description", "created_at", "updated_at")
+INSERT INTO "permissions" ("id", "code", "module", "description", "created_at")
 VALUES (
     gen_random_uuid(),
     'platform.invite.create',
     'platform',
     'Create and dispatch principal onboarding invites for tenant schools',
-    CURRENT_TIMESTAMP(3),
     CURRENT_TIMESTAMP(3)
 )
 ON CONFLICT ("code") DO NOTHING;
