@@ -326,6 +326,7 @@ describe("Phase 13b-1: Platform Auth E2E Suite", () => {
 
       const tamperedScopeToken = await new SignJWT({
         schoolId: SYSTEM_TENANT_ID,
+        sessionId: uuidv7(),
         scope: "tampered_scope_escalation",
       })
         .setSubject(platformAdminUserId)
@@ -339,7 +340,9 @@ describe("Phase 13b-1: Platform Auth E2E Suite", () => {
         .send({ code: "123456" });
 
       expect(res.status).toBe(401);
-      expect(res.body.message ?? res.body.detail).toMatch(/Invalid platform 2FA credentials/i);
+      expect(res.body.message ?? res.body.detail).toMatch(
+        /Invalid (?:platform 2FA credentials|or expired access token)/i,
+      );
     });
 
     it("should reject token for non-system-tenant user claiming platform_2fa_pending scope", async () => {

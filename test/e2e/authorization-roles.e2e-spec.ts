@@ -1194,11 +1194,9 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
               r RECORD;
           BEGIN
               FOR r IN (
-                  SELECT DISTINCT s.id AS school_id
+                  SELECT s.id AS school_id
                   FROM schools s
-                  JOIN roles ro ON ro.school_id = s.id
-                  WHERE ro.slug = 'platform_admin'
-                    AND s.id <> '00000000-0000-0000-0000-000000000001'::uuid
+                  WHERE s.id <> '00000000-0000-0000-0000-000000000001'::uuid
               ) LOOP
                   PERFORM set_config('app.current_school_id', r.school_id::text, true);
 
