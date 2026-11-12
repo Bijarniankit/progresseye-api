@@ -106,12 +106,14 @@ DO $$
 DECLARE
     r RECORD;
 BEGIN
+    PERFORM set_config('app.current_school_id', '', false);
+
     FOR r IN (
         SELECT s.id AS school_id
         FROM schools s
         WHERE s.id <> '00000000-0000-0000-0000-000000000001'::uuid
     ) LOOP
-        PERFORM set_config('app.current_school_id', r.school_id::text, true);
+        PERFORM set_config('app.current_school_id', r.school_id::text, false);
 
         DELETE FROM role_permissions
         WHERE role_id IN (
@@ -127,7 +129,7 @@ BEGIN
         WHERE slug = 'platform_admin' AND school_id = r.school_id;
     END LOOP;
 
-    PERFORM set_config('app.current_school_id', '', true);
+    PERFORM set_config('app.current_school_id', '', false);
 END $$;
 
 -- 6. SECURITY DEFINER Provisioning Function

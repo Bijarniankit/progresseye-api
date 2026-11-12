@@ -1185,41 +1185,40 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
       const countBefore = await prisma.role.count({ where: { schoolId: schoolCleanupId } });
       expect(countBefore).toBe(13);
 
-      // 4. Run the cleanup migration block as progresseye_owner (NOT postgres) under FORCE RLS
-      await prisma.$executeRawUnsafe(`SET ROLE progresseye_owner;`);
-      try {
-        await prisma.$executeRawUnsafe(`
-          DO $$
-          DECLARE
-              r RECORD;
-          BEGIN
-              FOR r IN (
-                  SELECT s.id AS school_id
-                  FROM schools s
-                  WHERE s.id <> '00000000-0000-0000-0000-000000000001'::uuid
-              ) LOOP
-                  PERFORM set_config('app.current_school_id', r.school_id::text, true);
+      // 4. Run the cleanup migration block as progresseye_owner (NOT postgres) under FORCE RLS in a single call
+      await prisma.$executeRawUnsafe(`
+        SET ROLE progresseye_owner;
+        DO $$
+        DECLARE
+            r RECORD;
+        BEGIN
+            PERFORM set_config('app.current_school_id', '', false);
 
-                  DELETE FROM role_permissions
-                  WHERE role_id IN (
-                      SELECT id FROM roles WHERE slug = 'platform_admin' AND school_id = r.school_id
-                  ) AND school_id = r.school_id;
+            FOR r IN (
+                SELECT s.id AS school_id
+                FROM schools s
+                WHERE s.id <> '00000000-0000-0000-0000-000000000001'::uuid
+            ) LOOP
+                PERFORM set_config('app.current_school_id', r.school_id::text, false);
 
-                  DELETE FROM user_roles
-                  WHERE role_id IN (
-                      SELECT id FROM roles WHERE slug = 'platform_admin' AND school_id = r.school_id
-                  ) AND school_id = r.school_id;
+                DELETE FROM role_permissions
+                WHERE role_id IN (
+                    SELECT id FROM roles WHERE slug = 'platform_admin' AND school_id = r.school_id
+                ) AND school_id = r.school_id;
 
-                  DELETE FROM roles
-                  WHERE slug = 'platform_admin' AND school_id = r.school_id;
-              END LOOP;
+                DELETE FROM user_roles
+                WHERE role_id IN (
+                    SELECT id FROM roles WHERE slug = 'platform_admin' AND school_id = r.school_id
+                ) AND school_id = r.school_id;
 
-              PERFORM set_config('app.current_school_id', '', true);
-          END $$;
-        `);
-      } finally {
-        await prisma.$executeRawUnsafe(`RESET ROLE;`);
-      }
+                DELETE FROM roles
+                WHERE slug = 'platform_admin' AND school_id = r.school_id;
+            END LOOP;
+
+            PERFORM set_config('app.current_school_id', '', false);
+        END $$;
+        RESET ROLE;
+      `);
 
       // 5. Assert: platform_admin role is deleted
       const platformAdminAfter = await prisma.role.findFirst({
