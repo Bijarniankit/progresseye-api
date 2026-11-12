@@ -2170,7 +2170,7 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
         .set("X-Forwarded-For", "198.51.100.121")
         .send({
           schoolSlug: "greenwood",
-          email: "alice@greenwood.com",
+          email: "carol@greenwood.com",
           password: rawPassword,
           clientType: "web",
         })
