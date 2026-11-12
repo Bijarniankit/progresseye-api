@@ -2251,9 +2251,7 @@ describe("Phase 12a: Authentication & Sessions E2E Attack-Case Suite", () => {
         })
         .expect(400);
 
-      expect(res.body.detail ?? res.body.message).toMatch(
-        /Invalid or expired token/i,
-      );
+      expect(res.body.detail ?? res.body.message).toMatch(/Invalid or expired token/i);
     });
   });
 });
