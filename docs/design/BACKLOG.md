@@ -119,6 +119,26 @@ Deferred maintenance chores and dependency upgrades scheduled for execution at t
   - Provide a paginated, filterable endpoint (`GET /api/v1/platform/audit-logs`) protected by `PlatformGuard` and requiring `platform.audit.read` permission.
   - Implement field-level masking and temporal range filtering to support institutional security audits and regulatory compliance.
 
+### 20. Investigate and Remove "forceExit": true in test/jest-e2e.json
+- **Context**: In Phase 13b-1, `"forceExit": true` was added to `test/jest-e2e.json` to prevent Jest test runner process hangs after all 194 e2e tests complete.
+- **Checklist Item**:
+  - Run the e2e test suite with `jest --detectOpenHandles` to identify asynchronous resources or handles preventing clean Node.js process exit.
+  - Audit and ensure all Fastify HTTP servers, Prisma client instances, and Redis connections (ioredis) in test setups and teardowns are closed explicitly in `afterAll` hooks (`server.closeAllConnections()`, `app.close()`, `prisma.$disconnect()`, `redis.quit()`).
+  - Once all open handles are cleanly terminated across all e2e suites, remove `"forceExit": true` from `test/jest-e2e.json`.
+
+### 21. Refusal of system-platform Slug on Tenant Authentication Endpoints (Phase 13b-2 Priority)
+- **Context**: In Phase 13b-1, platform administrators reside in the system tenant (`00000000-0000-0000-0000-000000000001`, slug `system-platform`) and authenticate exclusively via `/api/v1/platform/auth/*` routes.
+- **Checklist Item (To be completed first in Phase 13b-2)**:
+  - Update tenant authentication endpoints (`POST /api/v1/auth/login`, `POST /api/v1/auth/forgot-password`, `POST /api/v1/auth/reset-password`, `POST /api/v1/auth/verify-email`, `POST /api/v1/auth/verify-email/resend`, and the `POST /api/v1/auth/refresh` token rotation path) to reject any request specifying the `system-platform` school slug or presenting a refresh cookie naming the system tenant.
+  - Return generic responses (e.g. 401 Unauthorized for login/refresh, generic success messages for password reset / verification to prevent slug enumeration) and ensure no access or refresh tokens are ever issued for the system tenant through tenant auth endpoints.
+  - Add comprehensive e2e tests asserting that requests against tenant auth routes with `schoolSlug: "system-platform"` or presenting a system tenant refresh token are consistently rejected.
+
+### 22. Soft-Deleted Admin E2E Test State Restoration in finally Block
+- **Context**: In Phase 13b-1, an e2e test was added in `test/e2e/platform-provisioning.e2e-spec.ts` asserting that soft-deleted platform administrators receive HTTP 401 Unauthorized.
+- **Checklist Item**:
+  - Wrap the database state mutation (`deletedAt: new Date()`) and subsequent assertions in a `try...finally` block (or handle cleanup in `afterEach`) to ensure `deletedAt` is unconditionally restored to `null` even if intermediate test assertions fail or throw unexpected errors.
+
+
 
 
 
