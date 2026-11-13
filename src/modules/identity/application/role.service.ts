@@ -4,12 +4,15 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../../../infra/prisma/prisma.service";
 import { PermissionCacheService } from "../domain/permission-cache.service";
 import {
   BUILT_IN_ROLES,
   isPlatformPermission,
   PERMISSIONS_CATALOG,
+  SYSTEM_PLATFORM_ROLES,
+  TENANT_BUILT_IN_ROLES,
 } from "../domain/permissions.catalog";
 import type { AssignRoleDto, CloneRoleDto, CreateRoleDto, UpdateRoleDto } from "../dto/role.dto";
 
@@ -49,15 +52,22 @@ export class RoleService {
    * Idempotently seeds the 13 built-in system roles and their permission mappings for a school tenant.
    * Runs strictly under the school's tenant RLS context.
    */
-  async seedBuiltInRolesForSchool(schoolId: string): Promise<void> {
+  async seedBuiltInRolesForSchool(schoolId: string, actorUserId?: string): Promise<void> {
     await this.seedGlobalPermissions();
 
-    await this.prisma.withTenant(schoolId, async (tx) => {
+    const runSeed = async (tx: Prisma.TransactionClient) => {
       // Fetch all permission records from the global catalog
       const allPermissions = await tx.permission.findMany();
-      const permMap = new Map(allPermissions.map((p) => [p.code, p.id]));
+      const permMap = new Map(
+        allPermissions.map((p: { code: string; id: string }) => [p.code, p.id]),
+      );
 
-      for (const builtIn of BUILT_IN_ROLES) {
+      const rolesToSeed =
+        schoolId === "00000000-0000-0000-0000-000000000001"
+          ? SYSTEM_PLATFORM_ROLES
+          : TENANT_BUILT_IN_ROLES;
+
+      for (const builtIn of rolesToSeed) {
         // Upsert Role under school_id
         let role = await tx.role.findFirst({
           where: {
@@ -109,7 +119,15 @@ export class RoleService {
           }
         }
       }
-    });
+    };
+
+    if (actorUserId) {
+      await this.prisma.withPlatformTenant(schoolId, runSeed, {
+        operationName: "SEED_BUILT_IN_ROLES",
+      });
+    } else {
+      await this.prisma.withTenant(schoolId, runSeed);
+    }
   }
 
   /**

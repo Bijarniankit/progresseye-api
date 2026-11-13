@@ -1111,6 +1111,145 @@
           "Identity & Roles"
         ]
       }
+    },
+    "/api/v1/platform/auth/login": {
+      "post": {
+        "operationId": "PlatformAuthController_login",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "2FA challenge or setup challenge issued"
+          },
+          "401": {
+            "description": "Invalid platform credentials"
+          }
+        },
+        "summary": "Platform administrator login (2FA mandatory)",
+        "tags": [
+          "Platform Auth"
+        ]
+      }
+    },
+    "/api/v1/platform/auth/2fa/setup": {
+      "post": {
+        "operationId": "PlatformAuthController_setup2Fa",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "TOTP secret and provisioning URI"
+          },
+          "401": {
+            "description": "Unauthorized or invalid temporary token"
+          }
+        },
+        "summary": "Initialize 2FA setup for platform admin",
+        "tags": [
+          "Platform Auth"
+        ]
+      }
+    },
+    "/api/v1/platform/auth/2fa/enable": {
+      "post": {
+        "operationId": "PlatformAuthController_enable2Fa",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "2FA activated and full platform session issued"
+          },
+          "400": {
+            "description": "Invalid code or setup not initiated"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "summary": "Verify first code to activate platform 2FA and receive recovery codes",
+        "tags": [
+          "Platform Auth"
+        ]
+      }
+    },
+    "/api/v1/platform/auth/2fa/verify": {
+      "post": {
+        "operationId": "PlatformAuthController_verify2Fa",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Login successful; returns platform access token"
+          },
+          "401": {
+            "description": "Invalid two-factor code or credentials"
+          }
+        },
+        "summary": "Complete platform login with 6-digit TOTP code or recovery code",
+        "tags": [
+          "Platform Auth"
+        ]
+      }
+    },
+    "/api/v1/platform/schools": {
+      "post": {
+        "operationId": "PlatformSchoolController_provisionSchool",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": "School provisioned successfully"
+          },
+          "400": {
+            "description": "Validation error or reserved slug"
+          },
+          "403": {
+            "description": "Forbidden: platform administrative scope required"
+          },
+          "409": {
+            "description": "Conflict: school slug already exists"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Provision a new tenant school with SECURITY DEFINER and built-in roles",
+        "tags": [
+          "Platform School Provisioning"
+        ]
+      }
+    },
+    "/api/v1/platform/schools/{id}/reseed-roles": {
+      "post": {
+        "operationId": "PlatformSchoolController_reseedRoles",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Roles reseeded successfully"
+          },
+          "403": {
+            "description": "Forbidden: platform administrative scope required"
+          },
+          "404": {
+            "description": "School not found"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Reseed/repair 12 built-in roles for a tenant school",
+        "tags": [
+          "Platform School Provisioning"
+        ]
+      }
     }
   },
   "info": {

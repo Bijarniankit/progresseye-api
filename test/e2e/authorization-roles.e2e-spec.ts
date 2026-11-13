@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { Writable } from "node:stream";
 import fastifyCookie from "@fastify/cookie";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
@@ -32,6 +34,7 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
 
   let principalAToken: string;
   let teacherAToken: string;
+  let studentAToken: string;
   let principalBToken: string;
 
   const rawPassword = "Password12345!";
@@ -178,6 +181,16 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
         });
       }
 
+      // Assign built-in student role to studentA
+      const studentRoleA = await prisma.role.findFirst({
+        where: { schoolId: schoolAId, slug: "student" },
+      });
+      if (studentRoleA) {
+        await prisma.userRole.create({
+          data: { schoolId: schoolAId, userId: studentAId, roleId: studentRoleA.id },
+        });
+      }
+
       // Generate access tokens
       const sessA = await tokenService.createAccessToken({
         userId: principalAId,
@@ -192,6 +205,13 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
         sessionId: "sess-t-a",
       });
       teacherAToken = sessT.token;
+
+      const sessS = await tokenService.createAccessToken({
+        userId: studentAId,
+        schoolId: schoolAId,
+        sessionId: "sess-s-a",
+      });
+      studentAToken = sessS.token;
 
       const sessB = await tokenService.createAccessToken({
         userId: principalBId,
@@ -214,7 +234,10 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
     let createdRoleId = "";
 
     it("GET /api/v1/identity/permissions: lists all global permissions for authorized admin", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const res = await request(app.getHttpServer())
         .get("/api/v1/identity/permissions")
@@ -226,8 +249,11 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
       expect(res.body.some((p: any) => p.code === "identity.role.create")).toBe(true);
     });
 
-    it("GET /api/v1/identity/roles: lists all 13 built-in roles for the school", async () => {
-      if (!dbAvailable) return;
+    it("GET /api/v1/identity/roles: lists all 12 built-in roles for the school", async () => {
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const res = await request(app.getHttpServer())
         .get("/api/v1/identity/roles")
@@ -235,17 +261,21 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
 
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body)).toBe(true);
-      expect(res.body.length).toBeGreaterThanOrEqual(13);
+      expect(res.body.length).toBe(12);
       expect(res.body.some((r: any) => r.slug === "principal" && r.isSystem === true)).toBe(true);
+      expect(res.body.some((r: any) => r.slug === "platform_admin")).toBe(false);
     });
 
     it("Idempotent Built-in Role Seeding: re-seeding built-in roles under real tenant context is idempotent", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const rolesBefore = await prisma.role.count({
         where: { schoolId: schoolAId, isSystem: true },
       });
-      expect(rolesBefore).toBe(13);
+      expect(rolesBefore).toBe(12);
 
       // Re-seed built-in roles for school A a second time
       await roleService.seedBuiltInRolesForSchool(schoolAId);
@@ -253,7 +283,7 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
       const rolesAfterSecondSeed = await prisma.role.count({
         where: { schoolId: schoolAId, isSystem: true },
       });
-      expect(rolesAfterSecondSeed).toBe(13);
+      expect(rolesAfterSecondSeed).toBe(12);
 
       // Re-seed a third time to strictly guarantee repeatability
       await roleService.seedBuiltInRolesForSchool(schoolAId);
@@ -261,21 +291,24 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
       const rolesAfterThirdSeed = await prisma.role.count({
         where: { schoolId: schoolAId, isSystem: true },
       });
-      expect(rolesAfterThirdSeed).toBe(13);
+      expect(rolesAfterThirdSeed).toBe(12);
 
-      // Verify all 13 built-in role slugs exist and have assigned permissions
+      // Verify all 12 built-in role slugs exist and have assigned permissions
       const seededRoles = await prisma.role.findMany({
         where: { schoolId: schoolAId, isSystem: true },
         include: { rolePermissions: true },
       });
-      expect(seededRoles).toHaveLength(13);
+      expect(seededRoles).toHaveLength(12);
       for (const r of seededRoles) {
         expect(r.rolePermissions.length).toBeGreaterThan(0);
       }
     });
 
     it("POST /api/v1/identity/roles: creates a custom role with valid permissions", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const res = await request(app.getHttpServer())
         .post("/api/v1/identity/roles")
@@ -295,7 +328,10 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
     });
 
     it("GET /api/v1/identity/roles/:id: retrieves details of the created custom role", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const res = await request(app.getHttpServer())
         .get(`/api/v1/identity/roles/${createdRoleId}`)
@@ -309,7 +345,10 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
     });
 
     it("POST /api/v1/identity/roles/:id/clone: clones an existing role into a new custom role", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const res = await request(app.getHttpServer())
         .post(`/api/v1/identity/roles/${createdRoleId}/clone`)
@@ -326,7 +365,10 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
     });
 
     it("PUT /api/v1/identity/roles/:id: updates a custom role", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const res = await request(app.getHttpServer())
         .put(`/api/v1/identity/roles/${createdRoleId}`)
@@ -341,7 +383,10 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
     });
 
     it("POST /api/v1/identity/roles/assign and unassign: manages user role assignment", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       // Assign custom role to student
       const assignRes = await request(app.getHttpServer())
@@ -369,7 +414,10 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
     });
 
     it("DELETE /api/v1/identity/roles/:id: deletes a custom role", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const res = await request(app.getHttpServer())
         .delete(`/api/v1/identity/roles/${createdRoleId}`)
@@ -379,7 +427,10 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
     });
 
     it("GET /api/v1/identity/users/me/effective-permissions: returns active permissions and role slugs", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const res = await request(app.getHttpServer())
         .get("/api/v1/identity/users/me/effective-permissions")
@@ -389,11 +440,237 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
       expect(Array.isArray(res.body.permissions)).toBe(true);
       expect(res.body.roles).toContain("principal");
     });
+
+    it("GET /api/v1/identity/users/me/effective-permissions: accessible to student without role-management permissions (@Authenticated)", async () => {
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
+
+      const res = await request(app.getHttpServer())
+        .get("/api/v1/identity/users/me/effective-permissions")
+        .set("Authorization", `Bearer ${studentAToken}`);
+
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body.permissions)).toBe(true);
+      expect(res.body.roles).toContain("student");
+    });
+  });
+
+  describe("RBAC Route Access Control Suite (Denied Role and Other-School)", () => {
+    let dummyRoleBId = "";
+
+    beforeAll(async () => {
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
+      const roleB = await prisma.role.findFirst({
+        where: { schoolId: schoolBId, slug: "teacher" },
+      });
+      if (roleB) dummyRoleBId = roleB.id;
+    });
+
+    it("GET /api/v1/identity/permissions: denied to student without identity.role.read (403)", async () => {
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
+      const res = await request(app.getHttpServer())
+        .get("/api/v1/identity/permissions")
+        .set("Authorization", `Bearer ${studentAToken}`);
+      expect(res.status).toBe(403);
+    });
+
+    it("GET /api/v1/identity/roles: denied to student without identity.role.read (403)", async () => {
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
+      const res = await request(app.getHttpServer())
+        .get("/api/v1/identity/roles")
+        .set("Authorization", `Bearer ${studentAToken}`);
+      expect(res.status).toBe(403);
+    });
+
+    it("POST /api/v1/identity/roles: denied to student without identity.role.create (403)", async () => {
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
+      const res = await request(app.getHttpServer())
+        .post("/api/v1/identity/roles")
+        .set("Authorization", `Bearer ${studentAToken}`)
+        .send({ name: "Student Custom Role", slug: "student-custom" });
+      expect(res.status).toBe(403);
+    });
+
+    it("GET /api/v1/identity/roles/:id: denied to student (403) and other-school returns 404", async () => {
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
+      // Denied role
+      const principalRoleA = await prisma.role.findFirst({
+        where: { schoolId: schoolAId, slug: "principal" },
+      });
+      const deniedRes = await request(app.getHttpServer())
+        .get(`/api/v1/identity/roles/${principalRoleA!.id}`)
+        .set("Authorization", `Bearer ${studentAToken}`);
+      expect(deniedRes.status).toBe(403);
+
+      // Other school
+      const otherRes = await request(app.getHttpServer())
+        .get(`/api/v1/identity/roles/${dummyRoleBId}`)
+        .set("Authorization", `Bearer ${principalAToken}`);
+      expect(otherRes.status).toBe(404);
+    });
+
+    it("PUT /api/v1/identity/roles/:id: denied to student (403) and other-school returns 404", async () => {
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
+      // Denied role
+      const deniedRes = await request(app.getHttpServer())
+        .put(`/api/v1/identity/roles/${dummyRoleBId}`)
+        .set("Authorization", `Bearer ${studentAToken}`)
+        .send({ name: "Hacked" });
+      expect(deniedRes.status).toBe(403);
+
+      // Other school
+      const otherRes = await request(app.getHttpServer())
+        .put(`/api/v1/identity/roles/${dummyRoleBId}`)
+        .set("Authorization", `Bearer ${principalAToken}`)
+        .send({ name: "Hacked" });
+      expect(otherRes.status).toBe(404);
+    });
+
+    it("DELETE /api/v1/identity/roles/:id: denied to student (403) and other-school returns 404", async () => {
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
+      // Denied role
+      const deniedRes = await request(app.getHttpServer())
+        .delete(`/api/v1/identity/roles/${dummyRoleBId}`)
+        .set("Authorization", `Bearer ${studentAToken}`);
+      expect(deniedRes.status).toBe(403);
+
+      // Other school
+      const otherRes = await request(app.getHttpServer())
+        .delete(`/api/v1/identity/roles/${dummyRoleBId}`)
+        .set("Authorization", `Bearer ${principalAToken}`);
+      expect(otherRes.status).toBe(404);
+    });
+
+    it("POST /api/v1/identity/roles/:id/clone: denied to student (403) and other-school returns 404", async () => {
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
+      // Denied role
+      const deniedRes = await request(app.getHttpServer())
+        .post(`/api/v1/identity/roles/${dummyRoleBId}/clone`)
+        .set("Authorization", `Bearer ${studentAToken}`)
+        .send({ name: "Clone", slug: "clone-slug" });
+      expect(deniedRes.status).toBe(403);
+
+      // Other school
+      const otherRes = await request(app.getHttpServer())
+        .post(`/api/v1/identity/roles/${dummyRoleBId}/clone`)
+        .set("Authorization", `Bearer ${principalAToken}`)
+        .send({ name: "Clone", slug: "clone-slug" });
+      expect(otherRes.status).toBe(404);
+    });
+
+    it("POST /api/v1/identity/roles/assign: denied to student (403) and other-school role/user returns 404", async () => {
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
+      // Denied role
+      const deniedRes = await request(app.getHttpServer())
+        .post("/api/v1/identity/roles/assign")
+        .set("Authorization", `Bearer ${studentAToken}`)
+        .send({ userId: teacherAId, roleId: dummyRoleBId });
+      expect(deniedRes.status).toBe(403);
+
+      // Other school role
+      const otherRes = await request(app.getHttpServer())
+        .post("/api/v1/identity/roles/assign")
+        .set("Authorization", `Bearer ${principalAToken}`)
+        .send({ userId: teacherAId, roleId: dummyRoleBId });
+      expect(otherRes.status).toBe(404);
+    });
+
+    it("POST /api/v1/identity/roles/unassign: denied to student (403) and other-school role returns 404", async () => {
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
+      // Denied role
+      const deniedRes = await request(app.getHttpServer())
+        .post("/api/v1/identity/roles/unassign")
+        .set("Authorization", `Bearer ${studentAToken}`)
+        .send({ userId: teacherAId, roleId: dummyRoleBId });
+      expect(deniedRes.status).toBe(403);
+
+      // Other school role
+      const otherRes = await request(app.getHttpServer())
+        .post("/api/v1/identity/roles/unassign")
+        .set("Authorization", `Bearer ${principalAToken}`)
+        .send({ userId: teacherAId, roleId: dummyRoleBId });
+      expect(otherRes.status).toBe(404);
+    });
+
+    it("POST /api/v1/identity/users/:id/deactivate: allowed for principal, denied to student (403), and other-school user returns 404", async () => {
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
+
+      // 1. Denied to student (403)
+      const deniedRes = await request(app.getHttpServer())
+        .post(`/api/v1/identity/users/${teacherAId}/deactivate`)
+        .set("Authorization", `Bearer ${studentAToken}`);
+      expect(deniedRes.status).toBe(403);
+
+      // 2. Cross-tenant: School A principal cannot deactivate School B user (404)
+      const otherRes = await request(app.getHttpServer())
+        .post(`/api/v1/identity/users/${principalBId}/deactivate`)
+        .set("Authorization", `Bearer ${principalAToken}`);
+      expect(otherRes.status).toBe(404);
+
+      // 3. Allowed: School A principal can deactivate a non-admin user in School A
+      const tempUser = await prisma.user.create({
+        data: {
+          id: uuidv7(),
+          schoolId: schoolAId,
+          email: `deact-${Date.now()}@alpha.com`,
+          firstName: "Deact",
+          lastName: "Target",
+          isActive: true,
+        },
+      });
+
+      const allowedRes = await request(app.getHttpServer())
+        .post(`/api/v1/identity/users/${tempUser.id}/deactivate`)
+        .set("Authorization", `Bearer ${principalAToken}`);
+      expect(allowedRes.status).toBe(200);
+      expect(allowedRes.body.success).toBe(true);
+
+      const updatedUser = await prisma.user.findUnique({ where: { id: tempUser.id } });
+      expect(updatedUser?.isActive).toBe(false);
+    });
   });
 
   describe("Attack & Security Verification", () => {
     it("Privilege Escalation: teacher cannot create role with unheld permissions (e.g. finance.invoice.create)", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const res = await request(app.getHttpServer())
         .post("/api/v1/identity/roles")
@@ -411,7 +688,10 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
     });
 
     it("Platform Permission Isolation: tenant admin cannot create role with platform.* permissions", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const res = await request(app.getHttpServer())
         .post("/api/v1/identity/roles")
@@ -429,7 +709,10 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
     });
 
     it("Self-Assignment Prevention: actor cannot assign roles to themselves", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const teacherRole = await prisma.role.findFirst({
         where: { schoolId: schoolAId, slug: "teacher" },
@@ -448,7 +731,10 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
     });
 
     it("Self-Role Modification Prevention: actor cannot modify their own assigned role", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const principalRole = await prisma.role.findFirst({
         where: { schoolId: schoolAId, slug: "principal" },
@@ -465,7 +751,10 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
     });
 
     it("System Role Immutability: built-in system roles cannot be deleted or renamed", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const teacherRole = await prisma.role.findFirst({
         where: { schoolId: schoolAId, slug: "teacher" },
@@ -482,7 +771,10 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
     });
 
     it("Cross-Tenant Isolation: School A principal cannot access or modify School B roles", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const schoolBRole = await prisma.role.findFirst({
         where: { schoolId: schoolBId, slug: "principal" },
@@ -496,7 +788,10 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
     });
 
     it("Last-Admin Lockout Guard: cannot unassign the sole administrator of a school", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const principalRole = await prisma.role.findFirst({
         where: { schoolId: schoolAId, slug: "principal" },
@@ -561,7 +856,10 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
       if (process.env.CI && !dbAvailable) {
         throw new Error("Database is required in CI for concurrency testing");
       }
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const principalRole = await prisma.role.findFirst({
         where: { schoolId: schoolAId, slug: "principal" },
@@ -658,7 +956,10 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
       if (process.env.CI && !dbAvailable) {
         throw new Error("Database is required in CI");
       }
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       try {
         const res = await request(app.getHttpServer())
@@ -688,7 +989,10 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
       if (process.env.CI && !dbAvailable) {
         throw new Error("Database is required in CI");
       }
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const principalRole = await prisma.role.findFirst({
         where: { schoolId: schoolAId, slug: "principal" },
@@ -825,7 +1129,10 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
       if (process.env.CI && !dbAvailable) {
         throw new Error("Database is required in CI");
       }
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       const principalRole = await prisma.role.findFirst({
         where: { schoolId: schoolAId, slug: "principal" },
@@ -936,7 +1243,10 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
     });
 
     it("Stale Token Defense: revoked role immediately blocks unexpired JWT on next request", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       // 1. Create temporary user and assign custom role
       const tempUserId = uuidv7();
@@ -1013,7 +1323,10 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
     });
 
     it("Redis-Down Fallback: permission checks fall back to PostgreSQL and succeed when Redis is down", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       // Mock redisService.getClient to return disconnected client
       const realGetClient = redisService.getClient.bind(redisService);
@@ -1032,7 +1345,10 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
     });
 
     it("Redis-Down Role Change: fails role mutation and rolls back DB transaction if Redis cache eviction fails", async () => {
-      if (!dbAvailable) return;
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
 
       // 1. Create a test user in school A
       const testUserId = uuidv7();
@@ -1089,6 +1405,111 @@ describe("Phase 13a: Authorization & Role Designer E2E Suite", () => {
           })
           .catch(() => {});
       }
+    });
+
+    it("should run cleanup migration as progresseye_owner under FORCE RLS, removing platform_admin role/perms/users and leaving 12 tenant roles", async () => {
+      if (!dbAvailable) {
+        if (process.env.CI) throw new Error("Database is required in CI");
+        return;
+      }
+
+      const schoolCleanupId = uuidv7();
+      const testUserId = uuidv7();
+
+      // 1. Seed tenant school
+      await prisma.school.create({
+        data: {
+          id: schoolCleanupId,
+          name: "Cleanup Test Academy",
+          slug: `cleanup-${Date.now().toString().slice(-6)}`,
+          isActive: true,
+        },
+      });
+
+      // 2. Seed 12 tenant built-in roles
+      await roleService.seedBuiltInRolesForSchool(schoolCleanupId);
+
+      // 3. Inject a legacy 13a platform_admin role with role_permissions and user_roles in this tenant school
+      const platformAdminRoleId = uuidv7();
+      await prisma.$executeRaw`
+        INSERT INTO roles (id, school_id, name, slug, description, is_system, created_at, updated_at)
+        VALUES (${platformAdminRoleId}::uuid, ${schoolCleanupId}::uuid, 'Platform Administrator', 'platform_admin', 'Legacy tenant platform admin', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+      `;
+
+      // Create test user in this school
+      await prisma.user.create({
+        data: {
+          id: testUserId,
+          schoolId: schoolCleanupId,
+          email: `cleanup-user-${Date.now()}@test.internal`,
+          firstName: "Cleanup",
+          lastName: "User",
+          isActive: true,
+        },
+      });
+
+      // Link user_role and role_permission to platform_admin in this tenant school
+      const anyPerm = await prisma.permission.findFirst();
+      if (anyPerm) {
+        await prisma.$executeRaw`
+          INSERT INTO role_permissions (id, school_id, role_id, permission_id, created_at)
+          VALUES (gen_random_uuid(), ${schoolCleanupId}::uuid, ${platformAdminRoleId}::uuid, ${anyPerm.id}::uuid, CURRENT_TIMESTAMP);
+        `;
+      }
+      await prisma.$executeRaw`
+        INSERT INTO user_roles (id, school_id, user_id, role_id, created_at)
+        VALUES (gen_random_uuid(), ${schoolCleanupId}::uuid, ${testUserId}::uuid, ${platformAdminRoleId}::uuid, CURRENT_TIMESTAMP);
+      `;
+
+      // Verify that before cleanup, 13 roles exist for this school (including platform_admin)
+      const countBefore = await prisma.role.count({ where: { schoolId: schoolCleanupId } });
+      expect(countBefore).toBe(13);
+
+      // 4. Run the cleanup migration block by reading the actual migration file from disk
+      const migrationPath = path.resolve(
+        __dirname,
+        "../../prisma/migrations/20261111000000_platform_provisioning_and_system_tenant/migration.sql",
+      );
+      const migrationSql = fs.readFileSync(migrationPath, "utf8");
+
+      // Extract Section 5 DO block from migration.sql
+      const match = migrationSql.match(/-- 5\. Data Cleanup[\s\S]*?(DO \$\$[\s\S]*?END \$\$;)/);
+      if (!match || !match[1]) {
+        throw new Error("Section 5 cleanup DO block not found in migration.sql");
+      }
+      const cleanupSql = match[1];
+
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(`SET ROLE progresseye_owner;`);
+        try {
+          await tx.$executeRawUnsafe(cleanupSql);
+        } finally {
+          await tx.$executeRawUnsafe(`RESET ROLE;`);
+        }
+      });
+
+      // 5. Assert: platform_admin role is deleted
+      const platformAdminAfter = await prisma.role.findFirst({
+        where: { schoolId: schoolCleanupId, slug: "platform_admin" },
+      });
+      expect(platformAdminAfter).toBeNull();
+
+      // Assert: orphaned role_permissions and user_roles are removed
+      const rolePermsAfter = await prisma.rolePermission.count({
+        where: { schoolId: schoolCleanupId, roleId: platformAdminRoleId },
+      });
+      expect(rolePermsAfter).toBe(0);
+
+      const userRolesAfter = await prisma.userRole.count({
+        where: { schoolId: schoolCleanupId, roleId: platformAdminRoleId },
+      });
+      expect(userRolesAfter).toBe(0);
+
+      // Assert: exactly 12 built-in tenant roles remain
+      const totalRolesAfter = await prisma.role.count({
+        where: { schoolId: schoolCleanupId },
+      });
+      expect(totalRolesAfter).toBe(12);
     });
   });
 });

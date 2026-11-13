@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { BadRequestException, Injectable, UnauthorizedException } from "@nestjs/common";
 import { jwtVerify, SignJWT } from "jose";
+import { SYSTEM_TENANT_ID } from "../../../common/request-context/tenant-context.service";
 import { AppConfigService } from "../../../config/config.service";
 
 export interface AccessTokenClaims {
@@ -145,6 +146,71 @@ export class TokenService {
   }
 
   /**
+   * Signs a 5-minute temporary token for platform 2FA verification or onboarding setup.
+   */
+  async createTemporaryPlatformTwoFactorToken(claims: {
+    userId: string;
+    setup?: boolean;
+  }): Promise<{ token: string; expiresIn: number }> {
+    const expiresInSeconds = 5 * 60; // 5 minutes
+    const scope = claims.setup ? "platform_2fa_setup_pending" : "platform_2fa_pending";
+    const token = await new SignJWT({
+      schoolId: SYSTEM_TENANT_ID,
+      scope,
+    })
+      .setSubject(claims.userId)
+      .setProtectedHeader({ alg: "HS256", kid: this.jwtKid })
+      .setIssuedAt()
+      .setExpirationTime(`${expiresInSeconds}s`)
+      .sign(this.jwtSecret);
+
+    return { token, expiresIn: expiresInSeconds };
+  }
+
+  /**
+   * Signs a 15-minute temporary token restricted to initial 2FA setup.
+   */
+  async createTemporaryTwoFactorSetupToken(claims: {
+    userId: string;
+    schoolId: string;
+  }): Promise<{ token: string; expiresIn: number }> {
+    const expiresInSeconds = 15 * 60;
+    const token = await new SignJWT({
+      schoolId: claims.schoolId,
+      scope: "2fa_setup_pending",
+    })
+      .setSubject(claims.userId)
+      .setProtectedHeader({ alg: "HS256", kid: this.jwtKid })
+      .setIssuedAt()
+      .setExpirationTime(`${expiresInSeconds}s`)
+      .sign(this.jwtSecret);
+
+    return { token, expiresIn: expiresInSeconds };
+  }
+
+  /**
+   * Signs a 15-minute access token for platform admin with scope: "platform".
+   */
+  async createPlatformAccessToken(claims: {
+    userId: string;
+    sessionId: string;
+  }): Promise<{ token: string; expiresIn: number }> {
+    const expiresInSeconds = 15 * 60; // 15 minutes
+    const token = await new SignJWT({
+      schoolId: SYSTEM_TENANT_ID,
+      sessionId: claims.sessionId,
+      scope: "platform",
+    })
+      .setSubject(claims.userId)
+      .setProtectedHeader({ alg: "HS256", kid: this.jwtKid })
+      .setIssuedAt()
+      .setExpirationTime(`${expiresInSeconds}s`)
+      .sign(this.jwtSecret);
+
+    return { token, expiresIn: expiresInSeconds };
+  }
+
+  /**
    * Signs a 15-minute access token via jose with HS256 and key id.
    */
   async createAccessToken(claims: {
@@ -181,7 +247,13 @@ export class TokenService {
       }
 
       const scope = (payload.scope as string) || "access";
-      if (scope === "pwd_change_pending" || scope === "2fa_pending") {
+      if (
+        scope === "pwd_change_pending" ||
+        scope === "2fa_pending" ||
+        scope === "2fa_setup_pending" ||
+        scope === "platform_2fa_pending" ||
+        scope === "platform_2fa_setup_pending"
+      ) {
         return {
           sub: payload.sub,
           schoolId: payload.schoolId as string,

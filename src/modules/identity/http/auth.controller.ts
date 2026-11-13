@@ -416,8 +416,32 @@ export class AuthController {
   async enable2Fa(
     @CurrentUser() user: AuthenticatedUser,
     @Body(new ZodValidationPipe(Enable2FaSchema)) dto: Enable2FaDto,
+    @Req() req: FastifyRequest,
+    @Res({ passthrough: true }) res: FastifyReply,
   ): Promise<TwoFactorEnableResponseDto> {
-    return this.authService.enable2Fa(user.schoolId, user.userId, dto.code);
+    const isMobile =
+      req.headers["x-client-type"] === "mobile" || req.headers["X-Client-Type"] === "mobile";
+    const clientIp = req.ip || "127.0.0.1";
+    const userAgent = req.headers["user-agent"];
+
+    const result = await this.authService.enable2Fa(user.schoolId, user.userId, dto.code, {
+      clientIp,
+      userAgent,
+      isMobile,
+      isSetupPending: user.scope === "2fa_setup_pending",
+    });
+
+    if ("compoundRefreshToken" in result && result.compoundRefreshToken && !isMobile) {
+      res.setCookie("pe_refresh_token", result.compoundRefreshToken, {
+        path: "/api/v1/auth",
+        httpOnly: true,
+        secure: this.config.isProduction,
+        sameSite: "lax",
+        maxAge: 7 * 24 * 60 * 60,
+      });
+    }
+
+    return result as TwoFactorEnableResponseDto;
   }
 
   @Post("2fa/verify")

@@ -5,7 +5,10 @@ import {
   type NestInterceptor,
 } from "@nestjs/common";
 import type { Observable } from "rxjs";
-import { TenantContextService } from "../../../../common/request-context/tenant-context.service";
+import {
+  SYSTEM_TENANT_ID,
+  TenantContextService,
+} from "../../../../common/request-context/tenant-context.service";
 import type { AuthenticatedUser } from "../guards/jwt-auth.guard";
 
 @Injectable()
@@ -17,8 +20,10 @@ export class TenantContextInterceptor implements NestInterceptor {
     const user = request.user as AuthenticatedUser | undefined;
 
     if (user?.schoolId) {
-      return this.tenantContext.runSync({ schoolId: user.schoolId, userId: user.userId }, () =>
-        next.handle(),
+      const isPlatform = user.schoolId === SYSTEM_TENANT_ID && (user as any).scope === "platform";
+      return this.tenantContext.runSync(
+        { schoolId: user.schoolId, userId: user.userId, isPlatform },
+        () => next.handle(),
       );
     }
 

@@ -57,10 +57,82 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   ): Promise<T> {
     if (this.tenantContext) {
       this.tenantContext.validateTenantId(schoolId);
+      const activeTenantId = this.tenantContext.getTenantId();
+      if (activeTenantId && activeTenantId !== schoolId) {
+        throw new Error(
+          `Cross-tenant execution forbidden: active request tenant ${activeTenantId} does not match target tenant ${schoolId}. Platform operations must use withPlatformTenant.`,
+        );
+      }
     }
     return this.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT set_config('app.current_school_id', ${schoolId}, true)`;
       return fn(tx);
+    });
+  }
+
+  /**
+   * Cross-tenant execution wrapper exclusively for platform operations.
+   * Enforces that the execution holds active platform scope,
+   * sets the target tenant context internally within a transaction,
+   * executes the operation, and writes an audit log entry in the same transaction.
+   * If the audit log insertion fails, the entire transaction rolls back.
+   * Closes BACKLOG item 8 as the sole authorized cross-tenant transaction manager.
+   */
+  async withPlatformTenant<T>(
+    targetSchoolId: string,
+    op: (tx: Prisma.TransactionClient) => Promise<T>,
+    options?: { operationName?: string; clientIpHash?: string },
+  ): Promise<T> {
+    if (!this.tenantContext || !this.tenantContext.isPlatformScope()) {
+      throw new Error("Cross-tenant execution requires active platform administrative scope.");
+    }
+    this.tenantContext.validateTenantId(targetSchoolId);
+
+    const store = this.tenantContext.getContext();
+    if (!store?.userId) {
+      throw new Error("Cross-tenant execution requires verified platform actor user ID.");
+    }
+    const actorUserId = store.userId;
+    const opName = options?.operationName || "PLATFORM_CROSS_TENANT_OPERATION";
+    const clientIpHash = options?.clientIpHash || (store as any)?.clientIpHash;
+    if (
+      !clientIpHash ||
+      typeof clientIpHash !== "string" ||
+      !/^[0-9a-f]{64}$/i.test(clientIpHash)
+    ) {
+      throw new Error("Cross-tenant execution requires valid 64-character HMAC clientIpHash.");
+    }
+
+    return this.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.current_school_id', ${targetSchoolId}, true)`;
+      const result = await op(tx);
+
+      // Write platform audit log entry (platform_audit_logs is append-only, progresseye_app has INSERT only)
+      // Must be in same transaction: if audit insertion fails, op(tx) rolls back
+      await tx.$executeRaw`
+        INSERT INTO "platform_audit_logs" (
+          "id",
+          "actor_user_id",
+          "action",
+          "resource",
+          "resource_id",
+          "payload",
+          "client_ip_hash",
+          "user_agent",
+          "created_at"
+        ) VALUES (
+          gen_random_uuid(),
+          ${actorUserId}::uuid,
+          ${opName},
+          'school',
+          ${targetSchoolId},
+          ${JSON.stringify({ operation: opName, targetSchoolId, actorUserId })}::jsonb,
+          ${clientIpHash},
+          COALESCE(NULLIF(current_setting('app.user_agent', true), ''), 'withPlatformTenant'),
+          CURRENT_TIMESTAMP(3)
+        )
+      `;
+      return result;
     });
   }
 

@@ -12,6 +12,7 @@ import { ThrottlerStorageRedisService } from "./infra/redis/throttler-storage-re
 import { IdentityModule } from "./modules/identity/identity.module";
 import { DiagnosticModule } from "./modules/platform/diagnostic/diagnostic.module";
 import { HealthModule } from "./modules/platform/health/health.module";
+import { PlatformModule } from "./modules/platform/platform.module";
 import { PublicModule } from "./modules/public/public.module";
 
 @Module({
@@ -92,6 +93,7 @@ import { PublicModule } from "./modules/public/public.module";
     DiagnosticModule,
     PublicModule,
     IdentityModule,
+    PlatformModule,
   ],
   controllers: [],
   providers: [

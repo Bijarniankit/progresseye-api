@@ -400,4 +400,22 @@ model UserRecoveryCode {
   @@map("user_recovery_codes")
 }
 
+// ---------------------------------------------------------
+// 17. Platform Audit Logs (Global Append-Only Sink)
+// ---------------------------------------------------------
+model PlatformAuditLog {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actorUserId  String?  @map("actor_user_id") @db.Uuid
+  action       String
+  resource     String
+  resourceId   String?  @map("resource_id")
+  payload      Json     @default("{}")
+  clientIpHash String?  @map("client_ip_hash")
+  userAgent    String?  @map("user_agent")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("platform_audit_logs")
+}
+
+
 

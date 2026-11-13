@@ -58,6 +58,10 @@ export const baseEnvSchema = z.object({
   TURNSTILE_ENABLED: z.string().default("false"),
   TURNSTILE_SECRET_KEY: z.string().default("1x0000000000000000000000000000000AA"),
 
+  // Platform Bootstrap (Phase 13b)
+  PLATFORM_BOOTSTRAP_SECRET: z.string().min(32).optional(),
+  ENABLE_PLATFORM_BOOTSTRAP: z.enum(["true", "false"]).default("false"),
+
   // HSTS configuration override (in seconds)
   HSTS_MAX_AGE_SECONDS: z.coerce.number().int().nonnegative().optional(),
   HSTS_INCLUDE_SUBDOMAINS: z.enum(["true", "false"]).optional(),

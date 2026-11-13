@@ -39,6 +39,7 @@ import { SessionRepository } from "./infra/session.repository";
   ],
   exports: [
     AuthService,
+    SessionRepository,
     TokenService,
     TotpService,
     PasswordService,
@@ -49,6 +50,7 @@ import { SessionRepository } from "./infra/session.repository";
     PoliciesGuard,
     TenantContextInterceptor,
     AuthEmailNotificationService,
+    AbusePreventionService,
   ],
 })
 export class IdentityModule {}
